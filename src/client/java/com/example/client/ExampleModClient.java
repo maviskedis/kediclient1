@@ -49,7 +49,7 @@ public class Extras {
 		auraKey = reg("Aura", GLFW.GLFW_KEY_K);
 		totemKey = reg("AutoTotem", GLFW.GLFW_KEY_J);
 		menuKey = reg("Extras Menu", GLFW.GLFW_KEY_RIGHT_CONTROL);
-
+		Extras.init();
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			LocalPlayer p = client.player;
 			if (p == null || client.level == null || client.gameMode == null) return;
