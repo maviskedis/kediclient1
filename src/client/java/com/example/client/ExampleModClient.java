@@ -6,6 +6,9 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -18,6 +21,11 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
 public class ExampleModClient implements ClientModInitializer {
 	static boolean fullbright = false;
 	static boolean autoSprint = false;
@@ -29,10 +37,11 @@ public class ExampleModClient implements ClientModInitializer {
 	static float aimFov = 60f;
 	static float aimSmooth = 6f;
 
-	private static KeyMapping fullbrightKey;
-	private static KeyMapping sprintKey;
-	private static KeyMapping triggerKey;
-	private static KeyMapping aimKey;
+	static KeyMapping fullbrightKey;
+	static KeyMapping sprintKey;
+	static KeyMapping triggerKey;
+	static KeyMapping aimKey;
+	static KeyMapping menuKey;
 
 	@Override
 	public void onInitializeClient() {
@@ -40,11 +49,15 @@ public class ExampleModClient implements ClientModInitializer {
 		sprintKey = reg("AutoSprint", GLFW.GLFW_KEY_H);
 		triggerKey = reg("TriggerBot", GLFW.GLFW_KEY_R);
 		aimKey = reg("AimAssist", GLFW.GLFW_KEY_V);
+		menuKey = reg("Menu", GLFW.GLFW_KEY_RIGHT_SHIFT);
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			Player p = client.player;
 			if (p == null || client.level == null) return;
 
+			while (menuKey.consumeClick()) {
+				if (client.screen == null) client.setScreen(new ConfigScreen());
+			}
 			while (fullbrightKey.consumeClick()) {
 				fullbright = !fullbright;
 				msg(p, "Fullbright", fullbright);
@@ -133,4 +146,149 @@ public class ExampleModClient implements ClientModInitializer {
 	private static void msg(Player p, String name, boolean on) {
 		p.displayClientMessage(Component.literal(name + ": " + (on ? "ACIK" : "KAPALI")), true);
 	}
-}
+
+	// ================= AYAR MENUSU =================
+	public static class ConfigScreen extends Screen {
+		private final List<Button> keyButtons = new ArrayList<>();
+		private final List<KeyMapping> keyMaps = new ArrayList<>();
+		private final List<String> keyPrefixes = new ArrayList<>();
+		private KeyMapping listening = null;
+
+		public ConfigScreen() {
+			super(Component.literal("KediClient"));
+		}
+
+		@Override
+		protected void init() {
+			keyButtons.clear();
+			keyMaps.clear();
+			keyPrefixes.clear();
+			int x = this.width / 2 - 155;
+			int kx = x + 205;
+			int y0 = 5;
+			int step = 21;
+
+			addRenderableWidget(toggle(x, y0, "Fullbright",
+				() -> fullbright, v -> fullbright = v));
+			addRenderableWidget(toggle(x, y0 + step, "AutoSprint",
+				() -> autoSprint, v -> autoSprint = v));
+			addRenderableWidget(toggle(x, y0 + step * 2, "TriggerBot",
+				() -> triggerBot, v -> triggerBot = v));
+			addRenderableWidget(toggle(x, y0 + step * 3, "Sadece oyuncu",
+				() -> triggerPlayersOnly, v -> triggerPlayersOnly = v));
+			addRenderableWidget(toggle(x, y0 + step * 4, "AimAssist",
+				() -> aimAssist, v -> aimAssist = v));
+			addRenderableWidget(toggle(x, y0 + step * 5, "Sadece vururken aim",
+				() -> aimOnlyWhileAttacking, v -> aimOnlyWhileAttacking = v));
+			addRenderableWidget(new Slider(x, y0 + step * 6, "Menzil", 3f, 8f,
+				aimRange, v -> aimRange = v));
+			addRenderableWidget(new Slider(x, y0 + step * 7, "Gorus acisi", 10f, 120f,
+				aimFov, v -> aimFov = v));
+			addRenderableWidget(new Slider(x, y0 + step * 8, "Yumusaklik", 1f, 20f,
+				aimSmooth, v -> aimSmooth = v));
+
+			addKey(kx, y0, "Tus", fullbrightKey);
+			addKey(kx, y0 + step, "Tus", sprintKey);
+			addKey(kx, y0 + step * 2, "Tus", triggerKey);
+			addKey(kx, y0 + step * 4, "Tus", aimKey);
+			addKey(kx, y0 + step * 5, "Menu", menuKey);
+
+			addRenderableWidget(Button.builder(Component.literal("Kapat"), b -> onClose())
+				.bounds(kx, y0 + step * 8, 110, 20).build());
+		}
+
+		private void addKey(int x, int y, String prefix, KeyMapping km) {
+			Button b = Button.builder(keyLabel(prefix, km), btn -> {
+				listening = km;
+				refreshKeys();
+			}).bounds(x, y, 110, 20).build();
+			keyButtons.add(b);
+			keyMaps.add(km);
+			keyPrefixes.add(prefix);
+			addRenderableWidget(b);
+		}
+
+		private Component keyLabel(String prefix, KeyMapping km) {
+			if (km == listening) {
+				return Component.literal("> bir tusa bas <");
+			}
+			return Component.literal(prefix + ": ").append(km.getTranslatedKeyMessage());
+		}
+
+		private void refreshKeys() {
+			for (int i = 0; i < keyButtons.size(); i++) {
+				keyButtons.get(i).setMessage(keyLabel(keyPrefixes.get(i), keyMaps.get(i)));
+			}
+		}
+
+		private void bind(InputConstants.Key key) {
+			Minecraft mc = Minecraft.getInstance();
+			mc.options.setKey(listening, key);
+			KeyMapping.resetMapping();
+			mc.options.save();
+			listening = null;
+			refreshKeys();
+		}
+
+		@Override
+		public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+			if (listening != null) {
+				if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+					listening = null;
+					refreshKeys();
+				} else {
+					bind(InputConstants.getKey(keyCode, scanCode));
+				}
+				return true;
+			}
+			return super.keyPressed(keyCode, scanCode, modifiers);
+		}
+
+		@Override
+		public boolean mouseClicked(double mouseX, double mouseY, int button) {
+			if (listening != null) {
+				bind(InputConstants.Type.MOUSE.getOrCreate(button));
+				return true;
+			}
+			return super.mouseClicked(mouseX, mouseY, button);
+		}
+
+		private Button toggle(int x, int y, String name, Supplier<Boolean> get, Consumer<Boolean> set) {
+			return Button.builder(label(name, get.get()), b -> {
+				set.accept(!get.get());
+				b.setMessage(label(name, get.get()));
+			}).bounds(x, y, 200, 20).build();
+		}
+
+		private static Component label(String name, boolean on) {
+			return Component.literal(name + ": " + (on ? "ACIK" : "KAPALI"));
+		}
+	}
+
+	private static class Slider extends AbstractSliderButton {
+		private final String name;
+		private final float min;
+		private final float max;
+		private final Consumer<Float> setter;
+
+		Slider(int x, int y, String name, float min, float max, float current, Consumer<Float> setter) {
+			super(x, y, 200, 20, Component.empty(), (current - min) / (max - min));
+			this.name = name;
+			this.min = min;
+			this.max = max;
+			this.setter = setter;
+			updateMessage();
+		}
+
+		@Override
+		protected void updateMessage() {
+			float v = min + (float) this.value * (max - min);
+			setMessage(Component.literal(name + ": " + String.format("%.1f", v)));
+		}
+
+		@Override
+		protected void applyValue() {
+			setter.accept(min + (float) this.value * (max - min));
+		}
+	}
+	}
