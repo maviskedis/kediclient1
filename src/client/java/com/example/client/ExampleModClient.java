@@ -187,7 +187,10 @@ public class ExampleModClient implements ClientModInitializer {
 
 		@Override
 		protected void updateMessage() {
-			setMessage(Component.literal(name + ": " + String.format("%.1f", min + value * (max - min))));
+			setMessage(Component.literal(name + ": " + String.format("%.1f", min +  * (max - min)));
+		}
+	}
+}value * (max - min))));
 		}
 
 		@Override
