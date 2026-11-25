@@ -9,9 +9,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -19,13 +22,19 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
@@ -46,6 +55,15 @@ public class ExampleModClient implements ClientModInitializer {
 	static LocalPlayer lastPlayer = null;
 	static long splashStart = 0;
 	static int tick = 0;
+	static LivingEntity auraTarget = null;
+	static BlockPos bedPos = null;
+	static double bedDist = -1;
+	static double speedBps = 0;
+	static double lastPx = 0;
+	static double lastPz = 0;
+	static int frames = 0;
+	static int fpsValue = 0;
+	static long fpsStart = 0;
 
 	// =====================================================
 	//  BASLANGIC
@@ -57,11 +75,13 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(new Aura());
 		MODS.add(new TriggerBot());
 		MODS.add(criticals);
+		MODS.add(new Velocity());
 		MODS.add(new AutoTotem());
 		// Elytra
 		MODS.add(new ElytraBooster());
 		MODS.add(new ElytraTarget());
 		MODS.add(new ElytraHelper());
+		MODS.add(new ElytraFirework());
 		// Move
 		MODS.add(new AutoSprint());
 		MODS.add(new NoFall());
@@ -77,6 +97,12 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(new AntiBlind());
 		MODS.add(new AntiAfk());
 		MODS.add(new AutoWalk());
+		MODS.add(new AutoTool());
+		// Bedwars
+		MODS.add(new Scaffold());
+		MODS.add(new ResourceGlow());
+		MODS.add(new BedFinder());
+		MODS.add(new InvisEsp());
 		// Client
 		MODS.add(new ClickGuiMod());
 		hud = new HudMod();
@@ -96,6 +122,11 @@ public class ExampleModClient implements ClientModInitializer {
 				p.displayClientMessage(Component.literal("KediClient yuklendi | Sag Shift = menu"), false);
 			}
 			tick++;
+			double ddx = p.getX() - lastPx;
+			double ddz = p.getZ() - lastPz;
+			speedBps = Math.sqrt(ddx * ddx + ddz * ddz) * 20.0;
+			lastPx = p.getX();
+			lastPz = p.getZ();
 
 			long win = client.getWindow().getWindow();
 			for (Mod m : MODS) {
@@ -110,6 +141,19 @@ public class ExampleModClient implements ClientModInitializer {
 				if (!m.enabled) continue;
 				try {
 					m.onTick(client, p);
+				} catch (Exception ex) {
+					m.enabled = false;
+				}
+			}
+		});
+
+		ClientTickEvents.START_CLIENT_TICK.register(client -> {
+			LocalPlayer p = client.player;
+			if (p == null || client.level == null) return;
+			for (Mod m : MODS) {
+				if (!m.enabled) continue;
+				try {
+					m.onPreTick(client, p);
 				} catch (Exception ex) {
 					m.enabled = false;
 				}
@@ -170,7 +214,25 @@ public class ExampleModClient implements ClientModInitializer {
 		return mc.getConnection() != null && mc.getConnection().getPlayerInfo(o.getUUID()) == null;
 	}
 
-	static boolean swapChest(Minecraft mc, LocalPlayer p, boolean toElytra) {
+	static boolean swapChest(Minecraft mc, LocalPlayer p, boolean toElytra, boolean hotbarMode) {
+		if (hotbarMode) {
+			for (int i = 0; i < 9; i++) {
+				ItemStack s = p.getInventory().getItem(i);
+				boolean match;
+				if (toElytra) {
+					match = s.is(Items.ELYTRA);
+				} else {
+					match = s.getItem() instanceof ArmorItem a
+						&& a.getEquipmentSlot() == EquipmentSlot.CHEST;
+				}
+				if (match) {
+					mc.gameMode.handleInventoryMouseClick(
+						p.inventoryMenu.containerId, 6, i, ClickType.SWAP, p);
+					return true;
+				}
+			}
+			return false;
+		}
 		int src = -1;
 		for (int i = 9; i <= 44; i++) {
 			ItemStack s = p.inventoryMenu.getSlot(i).getItem();
@@ -191,6 +253,50 @@ public class ExampleModClient implements ClientModInitializer {
 		slotClick(mc, p, 6);
 		slotClick(mc, p, src);
 		return true;
+	}
+
+							static boolean useFirework(Minecraft mc, LocalPlayer p, boolean silent) {
+		if (p.getOffhandItem().is(Items.FIREWORK_ROCKET)) {
+			mc.gameMode.useItem(p, InteractionHand.OFF_HAND);
+			return true;
+		}
+		int slot = -1;
+		for (int i = 0; i < 9; i++) {
+			if (p.getInventory().getItem(i).is(Items.FIREWORK_ROCKET)) {
+				slot = i;
+				break;
+			}
+		}
+		if (slot == -1) return false;
+		int old = p.getInventory().selected;
+		p.getInventory().selected = slot;
+		mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
+		if (silent) p.getInventory().selected = old;
+		return true;
+	}
+
+	static boolean airBelow(Minecraft mc, LocalPlayer p, int n) {
+		BlockPos base = p.blockPosition();
+		for (int k = 1; k <= n; k++) {
+			if (!mc.level.getBlockState(base.below(k)).isAir()) return false;
+		}
+		return true;
+	}
+
+	static final Item[] SWORDS = {
+		Items.NETHERITE_SWORD, Items.DIAMOND_SWORD, Items.IRON_SWORD,
+		Items.STONE_SWORD, Items.GOLDEN_SWORD, Items.WOODEN_SWORD
+	};
+
+	static void equipBestSword(LocalPlayer p) {
+		for (Item sw : SWORDS) {
+			for (int i = 0; i < 9; i++) {
+				if (p.getInventory().getItem(i).is(sw)) {
+					p.getInventory().selected = i;
+					return;
+				}
+			}
+		}
 	}
 
 	static void slotClick(Minecraft mc, LocalPlayer p, int slot) {
@@ -230,7 +336,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-						static void loadConfig() {
+	static void loadConfig() {
 		try {
 			Path f = cfgPath();
 			if (!Files.exists(f)) return;
@@ -260,7 +366,15 @@ public class ExampleModClient implements ClientModInitializer {
 	// =====================================================
 	static void renderHud(GuiGraphics g) {
 		Minecraft mc = Minecraft.getInstance();
+		frames++;
+		long nowMs = System.currentTimeMillis();
+		if (nowMs - fpsStart >= 1000) {
+			fpsValue = frames;
+			frames = 0;
+			fpsStart = nowMs;
+		}
 		if (mc.player == null || mc.options.hideGui || hud == null || !hud.enabled) return;
+		LocalPlayer me = mc.player;
 		int sw = mc.getWindow().getGuiScaledWidth();
 		int sh = mc.getWindow().getGuiScaledHeight();
 
@@ -272,6 +386,51 @@ public class ExampleModClient implements ClientModInitializer {
 			g.fill(3, 3, 5, 15, ACCENT);
 			g.drawString(mc.font, t, 8, 6, ACCENT);
 			g.drawString(mc.font, info, 8 + mc.font.width(t), 6, 0xFFCCCCCC);
+		}
+
+		// bilgi satirlari
+		List<String> lines = new ArrayList<>();
+		if (hud.coords.value) {
+			lines.add(String.format("XYZ: %.0f %.0f %.0f", me.getX(), me.getY(), me.getZ()));
+		}
+		if (hud.dir.value) {
+			lines.add("Yon: " + me.getDirection().getName());
+		}
+		if (hud.fps.value) {
+			lines.add("FPS: " + fpsValue);
+		}
+		if (hud.ping.value && mc.getConnection() != null) {
+			var pi = mc.getConnection().getPlayerInfo(me.getUUID());
+			if (pi != null) lines.add("Ping: " + pi.getLatency() + " ms");
+		}
+		if (hud.speed.value) {
+			lines.add(String.format("Hiz: %.1f b/s", speedBps));
+		}
+		if (hud.time.value) {
+			java.time.LocalTime lt = java.time.LocalTime.now();
+			lines.add(String.format("Saat: %02d:%02d", lt.getHour(), lt.getMinute()));
+		}
+		if (hud.counters.value) {
+			int totems = 0;
+			int rockets = 0;
+			for (int i = 0; i < me.getInventory().getContainerSize(); i++) {
+				ItemStack st = me.getInventory().getItem(i);
+				if (st.is(Items.TOTEM_OF_UNDYING)) totems += st.getCount();
+				if (st.is(Items.FIREWORK_ROCKET)) rockets += st.getCount();
+			}
+			lines.add("Totem: " + totems + "  Roket: " + rockets);
+		}
+		if (hud.bed.value && bedPos != null) {
+			lines.add(String.format("Yatak: %.0f blok (%d %d %d)",
+				bedDist, bedPos.getX(), bedPos.getY(), bedPos.getZ()));
+		}
+		int iy = 20;
+		for (String line : lines) {
+			int w = mc.font.width(line) + 6;
+			g.fill(3, iy, 3 + w, iy + 11, 0x90000000);
+			g.fill(3, iy, 5, iy + 11, ACCENT);
+			g.drawString(mc.font, line, 8, iy + 2, 0xFFE0E0E0);
+			iy += 11;
 		}
 
 		if (hud.arrayList.value) {
@@ -292,6 +451,23 @@ public class ExampleModClient implements ClientModInitializer {
 				y += 11;
 				i++;
 			}
+		}
+
+		if (hud.targetHud.value && auraTarget != null && auraTarget.isAlive()) {
+			LivingEntity t = auraTarget;
+			String nm = t.getName().getString();
+			float hp = t.getHealth();
+			float mx = Math.max(1f, t.getMaxHealth());
+			int bw = 110;
+			int bx = sw / 2 - bw / 2;
+			int by = sh / 2 + 24;
+			g.fill(bx - 3, by - 3, bx + bw + 3, by + 31, 0xA0140C28);
+			g.fill(bx - 3, by - 3, bx - 1, by + 31, ACCENT);
+			g.drawString(mc.font, nm, bx + 2, by, 0xFFFFFFFF);
+			g.fill(bx + 2, by + 11, bx + bw - 2, by + 17, 0xFF2A2240);
+			int fw = (int) ((bw - 4) * Math.min(1f, hp / mx));
+			g.fill(bx + 2, by + 11, bx + 2 + fw, by + 17, hp / mx > 0.5f ? 0xFF7CFFB0 : 0xFFFF7C7C);
+			g.drawString(mc.font, String.format("%.1f / %.1f", hp, mx), bx + 2, by + 20, 0xFFCCCCCC);
 		}
 
 		if (hud.splash.value && splashStart > 0) {
@@ -318,7 +494,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	// =====================================================
+				// =====================================================
 	//  AYAR SINIFLARI
 	// =====================================================
 	static abstract class Setting {
@@ -379,6 +555,35 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
+	static class ModeSetting extends Setting {
+		final String[] options;
+		int index;
+
+		ModeSetting(String name, int index, String... options) {
+			super(name);
+			this.options = options;
+			this.index = index;
+		}
+
+		boolean is(String o) {
+			return options[index].equals(o);
+		}
+
+		@Override
+		String get() {
+			return String.valueOf(index);
+		}
+
+		@Override
+		void set(String v) {
+			try {
+				int i = Integer.parseInt(v.trim());
+				if (i >= 0 && i < options.length) index = i;
+			} catch (Exception ignored) {
+			}
+		}
+	}
+
 	// =====================================================
 	//  MODUL TEMELI
 	// =====================================================
@@ -407,6 +612,15 @@ public class ExampleModClient implements ClientModInitializer {
 			FloatSetting s = new FloatSetting(n, def, min, max);
 			settings.add(s);
 			return s;
+		}
+
+		ModeSetting mode(String n, int def, String... opts) {
+			ModeSetting s = new ModeSetting(n, def, opts);
+			settings.add(s);
+			return s;
+		}
+
+		void onPreTick(Minecraft mc, LocalPlayer p) {
 		}
 
 		void onEnable(Minecraft mc) {
@@ -441,17 +655,25 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting attackRange = num("Vurus menzili", 3.5f, 2f, 6f);
 		BoolSetting players = bool("Sadece oyuncu", true);
 		BoolSetting skipBots = bool("Bot atla", false);
-		BoolSetting rotate = bool("Hedefe don", true);
+		BoolSetting teams = bool("Takim atla", true);
+		ModeSetting rotMode = mode("Rotasyon", 0, "Smooth", "Silent", "Yok");
 		FloatSetting turnSpeed = num("Don hizi", 20f, 3f, 90f);
 		FloatSetting aimAngle = num("Vurus acisi", 25f, 5f, 90f);
 		FloatSetting fov = num("Hedef FOV", 360f, 30f, 360f);
+		BoolSetting autoSword = bool("Oto kilic", true);
 
 		Aura() {
 			super("Aura", "Combat", GLFW.GLFW_KEY_K);
 		}
 
 		@Override
+		void onDisable(Minecraft mc) {
+			auraTarget = null;
+		}
+
+		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
+			auraTarget = null;
 			if (mc.screen != null || !p.isAlive()) return;
 			LivingEntity best = null;
 			double bestDist = targetRange.value;
@@ -461,6 +683,7 @@ public class ExampleModClient implements ClientModInitializer {
 			for (LivingEntity e : list) {
 				if (players.value && !(e instanceof Player)) continue;
 				if (skipBots.value && e instanceof Player pl && isBot(mc, pl)) continue;
+				if (teams.value && p.isAlliedTo(e)) continue;
 				double d = p.distanceTo(e);
 				if (d > targetRange.value) continue;
 				if (fov.value < 360f) {
@@ -473,26 +696,38 @@ public class ExampleModClient implements ClientModInitializer {
 				}
 			}
 			if (best == null) return;
+			auraTarget = best;
 
 			float[] rot = rotationTo(p, aimPoint(best));
-			if (rotate.value) {
+			boolean smooth = rotMode.is("Smooth");
+			boolean silent = rotMode.is("Silent");
+			if (smooth) {
 				rotateToward(p, rot, turnSpeed.value);
 			}
 			if (p.distanceTo(best) > attackRange.value) return;
 			if (p.getAttackStrengthScale(0.5f) < 1.0f) return;
-			if (rotate.value && angleDiff(p, rot) > aimAngle.value) return;
+			if (smooth && angleDiff(p, rot) > aimAngle.value) return;
 
-					   			if (criticals != null && criticals.enabled) {
+			if (autoSword.value) equipBestSword(p);
+			if (criticals != null && criticals.enabled) {
 				criticals.doCrit(p);
+			}
+			if (silent) {
+				p.connection.send(new ServerboundMovePlayerPacket.Rot(rot[0], rot[1], p.onGround()));
 			}
 			mc.gameMode.attack(p, best);
 			p.swing(InteractionHand.MAIN_HAND);
+			if (silent) {
+				p.connection.send(new ServerboundMovePlayerPacket.Rot(p.getYRot(), p.getXRot(), p.onGround()));
+			}
 		}
 	}
 
 	static class TriggerBot extends Mod {
 		FloatSetting range = num("Menzil", 3f, 2f, 6f);
 		BoolSetting players = bool("Sadece oyuncu", true);
+		BoolSetting teams = bool("Takim atla", true);
+		BoolSetting autoSword = bool("Oto kilic", true);
 
 		TriggerBot() {
 			super("TriggerBot", "Combat", GLFW.GLFW_KEY_R);
@@ -506,8 +741,10 @@ public class ExampleModClient implements ClientModInitializer {
 				double dist = p.getEyePosition().distanceTo(hit.getLocation());
 				boolean ok = e instanceof LivingEntity && e.isAlive()
 						&& (!players.value || e instanceof Player)
+						&& !(teams.value && p.isAlliedTo(e))
 						&& dist <= range.value;
 				if (ok && p.getAttackStrengthScale(0.5f) >= 1.0f) {
+					if (autoSword.value) equipBestSword(p);
 					mc.gameMode.attack(p, e);
 					p.swing(InteractionHand.MAIN_HAND);
 				}
@@ -515,7 +752,43 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class Criticals extends Mod {
+	static class Velocity extends Mod {
+		FloatSetting horizontal = num("Yatay %", 0f, 0f, 100f);
+		FloatSetting vertical = num("Dikey %", 100f, 0f, 100f);
+		int lastHurt = 0;
+		int armed = 0;
+		double lastHz = 0;
+		double lastY = 0;
+
+		Velocity() {
+			super("Velocity", "Combat", -1);
+		}
+
+		@Override
+		void onPreTick(Minecraft mc, LocalPlayer p) {
+			int ht = p.hurtTime;
+			if (ht > lastHurt) armed = 3;
+			lastHurt = ht;
+			Vec3 v = p.getDeltaMovement();
+			double hz = Math.sqrt(v.x * v.x + v.z * v.z);
+			if (armed > 0) {
+				if (hz > lastHz + 0.08 || v.y > lastY + 0.1) {
+					double h = horizontal.value / 100.0;
+					double vt = vertical.value / 100.0;
+					p.setDeltaMovement(v.x * h, v.y * vt, v.z * h);
+					armed = 0;
+					v = p.getDeltaMovement();
+					hz = Math.sqrt(v.x * v.x + v.z * v.z);
+				} else {
+					armed--;
+				}
+			}
+			lastHz = hz;
+			lastY = v.y;
+		}
+	}
+
+					static class Criticals extends Mod {
 		Criticals() {
 			super("Criticals", "Combat", -1);
 		}
@@ -619,10 +892,14 @@ public class ExampleModClient implements ClientModInitializer {
 
 	static class ElytraHelper extends Mod {
 		BoolSetting autoSwap = bool("Oto takas", true);
+		ModeSetting swapMode = mode("Takas modu", 0, "Envanter", "Hotbar (tek tik)");
 		BoolSetting swapBack = bool("Inince geri tak", true);
-		BoolSetting autoFirework = bool("Oto roket", false);
+		FloatSetting minHeight = num("Min yukseklik", 4f, 1f, 20f);
+		FloatSetting fallSpeed = num("Dusme hizi", 0.4f, 0.1f, 1.5f);
+		ModeSetting rocket = mode("Roket", 0, "Kapali", "Hiz dusunce", "Surekli");
 		FloatSetting fwDelay = num("Roket araligi", 40f, 10f, 100f);
 		FloatSetting fwSpeed = num("Roket min hiz", 0.8f, 0.2f, 2f);
+		BoolSetting silentFw = bool("Silent roket", true);
 		int cd = 0;
 		int fwCd = 0;
 
@@ -635,18 +912,19 @@ public class ExampleModClient implements ClientModInitializer {
 			if (mc.screen != null) return;
 			if (cd > 0) cd--;
 			if (fwCd > 0) fwCd--;
+			boolean hotbar = swapMode.index == 1;
 			boolean elytraOn = p.getItemBySlot(EquipmentSlot.CHEST).is(Items.ELYTRA);
 			boolean falling = !p.onGround() && !p.isFallFlying() && !p.isInWater()
-				&& p.getDeltaMovement().y < -0.4;
+				&& p.getDeltaMovement().y < -fallSpeed.value;
 
-			if (autoSwap.value && falling && cd == 0) {
+			if (autoSwap.value && falling && cd == 0 && airBelow(mc, p, (int) minHeight.value)) {
 				if (elytraOn) {
 					if (p.tryToStartFallFlying()) {
 						p.connection.send(new ServerboundPlayerCommandPacket(
 							p, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
 					}
 					cd = 6;
-				} else if (swapChest(mc, p, true)) {
+				} else if (swapChest(mc, p, true, hotbar)) {
 					cd = 4;
 				} else {
 					cd = 20;
@@ -654,28 +932,38 @@ public class ExampleModClient implements ClientModInitializer {
 			}
 
 			if (swapBack.value && elytraOn && p.onGround() && cd == 0) {
-				swapChest(mc, p, false);
+				swapChest(mc, p, false, hotbar);
 				cd = 20;
 			}
 
-			if (autoFirework.value && p.isFallFlying() && fwCd == 0) {
-				if (p.getDeltaMovement().length() < fwSpeed.value) {
-					int slot = -1;
-					for (int i = 0; i < 9; i++) {
-						if (p.getInventory().getItem(i).is(Items.FIREWORK_ROCKET)) {
-							slot = i;
-							break;
-						}
-					}
-					if (slot != -1) {
-						int old = p.getInventory().selected;
-						p.getInventory().selected = slot;
-						mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
-						p.getInventory().selected = old;
-						fwCd = (int) fwDelay.value;
-					}
+			if (rocket.index != 0 && p.isFallFlying() && fwCd == 0) {
+				boolean need = rocket.index == 2 || p.getDeltaMovement().length() < fwSpeed.value;
+				if (need && useFirework(mc, p, silentFw.value)) {
+					fwCd = (int) fwDelay.value;
 				}
 			}
+		}
+	}
+
+	static class ElytraFirework extends Mod {
+		BoolSetting silent = bool("Silent", true);
+
+		ElytraFirework() {
+			super("ElytraFirework", "Elytra", -1);
+		}
+
+		@Override
+		void onPress(Minecraft mc) {
+			LocalPlayer p = mc.player;
+			if (p == null || mc.screen != null || !p.isFallFlying()) return;
+			if (useFirework(mc, p, silent.value) && mc.player != null) {
+				mc.player.displayClientMessage(Component.literal("Roket kullanildi"), true);
+			}
+		}
+
+		@Override
+		void toggle(Minecraft mc) {
+			onPress(mc);
 		}
 	}
 
@@ -714,7 +1002,7 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting speed = num("Hiz", 0.28f, 0.1f, 1.0f);
 		BoolSetting bhop = bool("Bhop (ziplama)", true);
 
-						Speed() {
+		Speed() {
 			super("Speed", "Move", -1);
 		}
 
@@ -740,7 +1028,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class Flight extends Mod {
+							static class Flight extends Mod {
 		FloatSetting speed = num("Hiz", 0.1f, 0.05f, 0.5f);
 
 		Flight() {
@@ -910,6 +1198,177 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
+	static class AutoTool extends Mod {
+		AutoTool() {
+			super("AutoTool", "Player", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || !mc.options.keyAttack.isDown()) return;
+			if (!(mc.hitResult instanceof BlockHitResult bhr) || bhr.getType() != HitResult.Type.BLOCK) return;
+			BlockState st = mc.level.getBlockState(bhr.getBlockPos());
+			float bestSpeed = p.getInventory().getItem(p.getInventory().selected).getDestroySpeed(st);
+			int bestSlot = -1;
+			for (int i = 0; i < 9; i++) {
+				float sp = p.getInventory().getItem(i).getDestroySpeed(st);
+				if (sp > bestSpeed) {
+					bestSpeed = sp;
+					bestSlot = i;
+				}
+			}
+			if (bestSlot != -1) p.getInventory().selected = bestSlot;
+		}
+	}
+
+	// =====================================================
+	//  BEDWARS
+	// =====================================================
+	static class Scaffold extends Mod {
+		FloatSetting delay = num("Gecikme (tick)", 1f, 0f, 6f);
+		BoolSetting autoSwitch = bool("Blok sec", true);
+		BoolSetting swing = bool("El salla", true);
+		int cd = 0;
+
+		Scaffold() {
+			super("Scaffold", "Bedwars", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null) return;
+			if (cd > 0) {
+				cd--;
+				return;
+			}
+			BlockPos below = p.blockPosition().below();
+			if (!mc.level.getBlockState(below).isAir()) return;
+
+			if (autoSwitch.value) {
+				for (int i = 0; i < 9; i++) {
+					if (p.getInventory().getItem(i).getItem() instanceof BlockItem) {
+						p.getInventory().selected = i;
+						break;
+					}
+				}
+			}
+			if (!(p.getMainHandItem().getItem() instanceof BlockItem)) return;
+
+			for (Direction d : Direction.values()) {
+				BlockPos np = below.relative(d);
+				if (mc.level.getBlockState(np).isAir()) continue;
+				Direction face = d.getOpposite();
+				Vec3 hitVec = Vec3.atCenterOf(np).add(
+					face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+				BlockHitResult hr = new BlockHitResult(hitVec, face, np, false);
+				mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hr);
+				if (swing.value) p.swing(InteractionHand.MAIN_HAND);
+				cd = (int) delay.value;
+				break;
+			}
+		}
+	}
+
+	static class ResourceGlow extends Mod {
+		BoolSetting diamond = bool("Elmas", true);
+		BoolSetting emerald = bool("Zumrut", true);
+		BoolSetting gold = bool("Altin", true);
+		BoolSetting iron = bool("Demir", false);
+		FloatSetting range = num("Menzil", 40f, 10f, 100f);
+
+		ResourceGlow() {
+			super("ResourceGlow", "Bedwars", -1);
+		}
+
+		private boolean wanted(ItemStack st) {
+			return (diamond.value && st.is(Items.DIAMOND))
+				|| (emerald.value && st.is(Items.EMERALD))
+				|| (gold.value && st.is(Items.GOLD_INGOT))
+				|| (iron.value && st.is(Items.IRON_INGOT));
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (tick % 5 != 0) return;
+			List<ItemEntity> list = mc.level.getEntitiesOfClass(
+				ItemEntity.class, p.getBoundingBox().inflate(range.value), x -> true);
+			for (ItemEntity it : list) {
+				it.setGlowingTag(wanted(it.getItem()));
+			}
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			if (mc.level == null || mc.player == null) return;
+			List<ItemEntity> list = mc.level.getEntitiesOfClass(
+				ItemEntity.class, mc.player.getBoundingBox().inflate(range.value), x -> true);
+			for (ItemEntity it : list) {
+				it.setGlowingTag(false);
+			}
+		}
+	}
+
+				 	static class BedFinder extends Mod {
+		FloatSetting radius = num("Yaricap", 16f, 4f, 32f);
+
+		BedFinder() {
+			super("BedFinder", "Bedwars", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (tick % 20 != 0) return;
+			int r = (int) radius.value;
+			int ry = Math.min(r, 10);
+			BlockPos c = p.blockPosition();
+			double best = Double.MAX_VALUE;
+			BlockPos found = null;
+			for (int x = -r; x <= r; x++) {
+				for (int y = -ry; y <= ry; y++) {
+					for (int z = -r; z <= r; z++) {
+						BlockPos pos = c.offset(x, y, z);
+						if (mc.level.getBlockState(pos).is(BlockTags.BEDS)) {
+							double d = pos.distSqr(c);
+							if (d < best) {
+								best = d;
+								found = pos;
+							}
+						}
+					}
+				}
+			}
+			bedPos = found;
+			bedDist = found == null ? -1 : Math.sqrt(best);
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			bedPos = null;
+			bedDist = -1;
+		}
+	}
+
+	static class InvisEsp extends Mod {
+		InvisEsp() {
+			super("InvisESP", "Bedwars", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			for (Player o : mc.level.players()) {
+				if (o != p && o.isInvisible()) o.setGlowingTag(true);
+			}
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			if (mc.level == null) return;
+			for (Player o : mc.level.players()) {
+				if (o.isInvisible()) o.setGlowingTag(false);
+			}
+		}
+	}
+
 	// =====================================================
 	//  CLIENT
 	// =====================================================
@@ -933,6 +1392,15 @@ public class ExampleModClient implements ClientModInitializer {
 		BoolSetting watermark = bool("Isim yazisi", true);
 		BoolSetting arrayList = bool("Modul listesi", true);
 		BoolSetting splash = bool("Acilis yazisi", true);
+		BoolSetting targetHud = bool("Hedef paneli", true);
+		BoolSetting coords = bool("Koordinat", true);
+		BoolSetting dir = bool("Yon", false);
+		BoolSetting fps = bool("FPS", true);
+		BoolSetting ping = bool("Ping", true);
+		BoolSetting speed = bool("Hiz (blok/sn)", false);
+		BoolSetting time = bool("Saat", false);
+		BoolSetting counters = bool("Totem/Roket sayaci", true);
+		BoolSetting bed = bool("Yatak bilgisi", true);
 
 		HudMod() {
 			super("HUD", "Client", -1);
@@ -960,7 +1428,7 @@ public class ExampleModClient implements ClientModInitializer {
 	}
 
 	public static class ClickScreen extends Screen {
-		static final String[] TABS = { "Combat", "Elytra", "Move", "Render", "Player", "Client" };
+		static final String[] TABS = { "Combat", "Elytra", "Move", "Render", "Player", "Bedwars", "Client" };
 		static String tab = "Combat";
 		static double scroll = 0;
 
@@ -985,8 +1453,13 @@ public class ExampleModClient implements ClientModInitializer {
 			return false;
 		}
 
+		private String fit(String t, int w) {
+			if (this.font.width(t) <= w - 2) return t;
+			return t.substring(0, Math.min(3, t.length()));
+		}
+
 		private void calc() {
-			pw = Math.min(280, this.width - 8);
+			pw = Math.min(310, this.width - 8);
 			px = (this.width - pw) / 2;
 			top = 38;
 			bottom = this.height - 6;
@@ -1001,7 +1474,7 @@ public class ExampleModClient implements ClientModInitializer {
 				y += 16;
 				if (m.expanded) {
 					for (Setting s : m.settings) {
-						list.add(new Row(s instanceof FloatSetting ? 2 : 1, m, s, y, 14));
+						list.add(new Row(s instanceof FloatSetting ? 2 : (s instanceof ModeSetting ? 4 : 1), m, s, y, 14));
 						y += 14;
 					}
 					list.add(new Row(3, m, null, y, 14));
@@ -1013,7 +1486,7 @@ public class ExampleModClient implements ClientModInitializer {
 			return list;
 		}
 
-					private void clampScroll() {
+		private void clampScroll() {
 			double maxScroll = Math.max(0, contentH - (bottom - top));
 			if (scroll > maxScroll) scroll = maxScroll;
 			if (scroll < 0) scroll = 0;
@@ -1036,7 +1509,7 @@ public class ExampleModClient implements ClientModInitializer {
 				int tx = px + i * tw;
 				boolean sel = TABS[i].equals(tab);
 				g.fill(tx, 22, tx + tw - 1, 35, sel ? 0xFF3A2670 : 0xE0181028);
-				g.drawCenteredString(this.font, TABS[i], tx + tw / 2, 25,
+				g.drawCenteredString(this.font, fit(TABS[i], tw), tx + tw / 2, 25,
 					sel ? 0xFFFFFFFF : 0xFFAAAAAA);
 			}
 
@@ -1079,6 +1552,12 @@ public class ExampleModClient implements ClientModInitializer {
 				g.fill(x0, ry, x0 + (int) ((x1 - x0) * frac), ry + 13, 0xFF4B2F9E);
 				g.drawString(this.font, f.name + ": " + String.format("%.2f", f.value),
 					x0 + 4, ry + 3, 0xFFFFFFFF);
+			} else if (r.type == 4) {
+				ModeSetting ms = (ModeSetting) r.s;
+				g.fill(px + 6, ry, px + pw - 6, ry + 13, 0xFF100C20);
+				g.drawString(this.font, ms.name, px + 10, ry + 3, 0xFFCCCCCC);
+				String cur = ms.options[ms.index];
+				g.drawString(this.font, cur, px + pw - 12 - this.font.width(cur), ry + 3, ACCENT);
 			} else {
 				g.fill(px + 6, ry, px + pw - 6, ry + 13, 0xFF100C20);
 				String t = listening == r.m
@@ -1088,7 +1567,7 @@ public class ExampleModClient implements ClientModInitializer {
 			}
 		}
 
-		private void setSlider(FloatSetting fs, double mx) {
+				 		private void setSlider(FloatSetting fs, double mx) {
 			double x0 = px + 6;
 			double x1 = px + pw - 6;
 			double f = Math.max(0.0, Math.min(1.0, (mx - x0) / (x1 - x0)));
@@ -1177,6 +1656,9 @@ public class ExampleModClient implements ClientModInitializer {
 						} else if (r.type == 1) {
 							BoolSetting b = (BoolSetting) r.s;
 							b.value = !b.value;
+						} else if (r.type == 4) {
+							ModeSetting ms = (ModeSetting) r.s;
+							ms.index = (ms.index + 1) % ms.options.length;
 						} else if (r.type == 3) {
 							listening = r.m;
 						}
@@ -1216,4 +1698,4 @@ public class ExampleModClient implements ClientModInitializer {
 			super.onClose();
 		}
 	}
-				}
+					}
