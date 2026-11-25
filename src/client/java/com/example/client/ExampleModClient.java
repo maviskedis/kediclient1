@@ -66,13 +66,17 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(new AutoSprint());
 		MODS.add(new NoFall());
 		MODS.add(new Flight());
+		MODS.add(new Speed());
 		// Render
 		MODS.add(new Fullbright());
 		MODS.add(new Esp());
+		MODS.add(new FovChanger());
 		// Player
 		MODS.add(new AutoRespawn());
 		MODS.add(new ChestStealer());
 		MODS.add(new AntiBlind());
+		MODS.add(new AntiAfk());
+		MODS.add(new AutoWalk());
 		// Client
 		MODS.add(new ClickGuiMod());
 		hud = new HudMod();
@@ -144,6 +148,28 @@ public class ExampleModClient implements ClientModInitializer {
 		return new float[] { yaw, pitch };
 	}
 
+	static Vec3 aimPoint(LivingEntity e) {
+		return e.position().add(0, e.getBbHeight() * 0.6, 0);
+	}
+
+	static float angleDiff(Player p, float[] rot) {
+		float dy = Mth.wrapDegrees(rot[0] - p.getYRot());
+		float dp = rot[1] - p.getXRot();
+		return (float) Math.sqrt(dy * dy + dp * dp);
+	}
+
+	static void rotateToward(LocalPlayer p, float[] rot, float maxStep) {
+		float step = Math.max(1f, maxStep);
+		float dy = Mth.wrapDegrees(rot[0] - p.getYRot());
+		float dp = rot[1] - p.getXRot();
+		p.setYRot(p.getYRot() + Mth.clamp(dy, -step, step));
+		p.setXRot(Mth.clamp(p.getXRot() + Mth.clamp(dp, -step, step), -90f, 90f));
+	}
+
+	static boolean isBot(Minecraft mc, Player o) {
+		return mc.getConnection() != null && mc.getConnection().getPlayerInfo(o.getUUID()) == null;
+	}
+
 	static boolean swapChest(Minecraft mc, LocalPlayer p, boolean toElytra) {
 		int src = -1;
 		for (int i = 9; i <= 44; i++) {
@@ -204,7 +230,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static void loadConfig() {
+						static void loadConfig() {
 		try {
 			Path f = cfgPath();
 			if (!Files.exists(f)) return;
@@ -247,6 +273,7 @@ public class ExampleModClient implements ClientModInitializer {
 			g.drawString(mc.font, t, 8, 6, ACCENT);
 			g.drawString(mc.font, info, 8 + mc.font.width(t), 6, 0xFFCCCCCC);
 		}
+
 		if (hud.arrayList.value) {
 			List<Mod> on = new ArrayList<>();
 			for (Mod m : MODS) {
@@ -410,9 +437,14 @@ public class ExampleModClient implements ClientModInitializer {
 	//  COMBAT
 	// =====================================================
 	static class Aura extends Mod {
-		FloatSetting range = num("Menzil", 3.5f, 2f, 6f);
+		FloatSetting targetRange = num("Hedef menzili", 5f, 3f, 8f);
+		FloatSetting attackRange = num("Vurus menzili", 3.5f, 2f, 6f);
 		BoolSetting players = bool("Sadece oyuncu", true);
+		BoolSetting skipBots = bool("Bot atla", false);
 		BoolSetting rotate = bool("Hedefe don", true);
+		FloatSetting turnSpeed = num("Don hizi", 20f, 3f, 90f);
+		FloatSetting aimAngle = num("Vurus acisi", 25f, 5f, 90f);
+		FloatSetting fov = num("Hedef FOV", 360f, 30f, 360f);
 
 		Aura() {
 			super("Aura", "Combat", GLFW.GLFW_KEY_K);
@@ -421,28 +453,36 @@ public class ExampleModClient implements ClientModInitializer {
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
 			if (mc.screen != null || !p.isAlive()) return;
-			if (p.getAttackStrengthScale(0.5f) < 1.0f) return;
 			LivingEntity best = null;
-			double bestDist = range.value;
+			double bestDist = targetRange.value;
 			List<LivingEntity> list = mc.level.getEntitiesOfClass(
-				LivingEntity.class, p.getBoundingBox().inflate(range.value),
+				LivingEntity.class, p.getBoundingBox().inflate(targetRange.value),
 				x -> x != p && x.isAlive() && !x.isSpectator());
 			for (LivingEntity e : list) {
 				if (players.value && !(e instanceof Player)) continue;
+				if (skipBots.value && e instanceof Player pl && isBot(mc, pl)) continue;
 				double d = p.distanceTo(e);
+				if (d > targetRange.value) continue;
+				if (fov.value < 360f) {
+					float[] r0 = rotationTo(p, aimPoint(e));
+					if (angleDiff(p, r0) > fov.value / 2f) continue;
+				}
 				if (d < bestDist) {
 					bestDist = d;
 					best = e;
 				}
 			}
 			if (best == null) return;
+
+			float[] rot = rotationTo(p, aimPoint(best));
 			if (rotate.value) {
-				Vec3 tp = best.position().add(0, best.getBbHeight() * 0.6, 0);
-				float[] rot = rotationTo(p, tp);
-				p.setYRot(rot[0]);
-				p.setXRot(rot[1]);
+				rotateToward(p, rot, turnSpeed.value);
 			}
-			if (criticals != null && criticals.enabled) {
+			if (p.distanceTo(best) > attackRange.value) return;
+			if (p.getAttackStrengthScale(0.5f) < 1.0f) return;
+			if (rotate.value && angleDiff(p, rot) > aimAngle.value) return;
+
+					   			if (criticals != null && criticals.enabled) {
 				criticals.doCrit(p);
 			}
 			mc.gameMode.attack(p, best);
@@ -515,6 +555,8 @@ public class ExampleModClient implements ClientModInitializer {
 	static class ElytraBooster extends Mod {
 		FloatSetting accel = num("Hizlanma", 0.06f, 0.01f, 0.3f);
 		FloatSetting max = num("Max hiz", 2.0f, 0.5f, 4.0f);
+		BoolSetting vertical = bool("Ziplayinca yuksel", true);
+		FloatSetting climb = num("Yukselme", 0.08f, 0.02f, 0.3f);
 
 		ElytraBooster() {
 			super("ElytraBooster", "Elytra", -1);
@@ -533,6 +575,10 @@ public class ExampleModClient implements ClientModInitializer {
 			} else if (mc.options.keyShift.isDown()) {
 				p.setDeltaMovement(v.scale(0.9));
 			}
+			if (vertical.value && mc.options.keyJump.isDown()) {
+				Vec3 c = p.getDeltaMovement();
+				p.setDeltaMovement(c.x, c.y + climb.value, c.z);
+			}
 		}
 	}
 
@@ -542,8 +588,7 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting predict = num("Tahmin", 3f, 0f, 10f);
 		BoolSetting onlyForward = bool("Sadece ileri tusu", true);
 
-                    
-    		ElytraTarget() {
+		ElytraTarget() {
 			super("ElytraTarget", "Elytra", -1);
 		}
 
@@ -665,6 +710,36 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
+	static class Speed extends Mod {
+		FloatSetting speed = num("Hiz", 0.28f, 0.1f, 1.0f);
+		BoolSetting bhop = bool("Bhop (ziplama)", true);
+
+						Speed() {
+			super("Speed", "Move", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || p.isFallFlying() || p.isInWater()) return;
+			if (p.getAbilities().flying) return;
+			float fwd = (mc.options.keyUp.isDown() ? 1f : 0f) - (mc.options.keyDown.isDown() ? 1f : 0f);
+			float str = (mc.options.keyLeft.isDown() ? 1f : 0f) - (mc.options.keyRight.isDown() ? 1f : 0f);
+			if (fwd == 0f && str == 0f) return;
+			double len = Math.sqrt(fwd * fwd + str * str);
+			double f = fwd / len;
+			double st = str / len;
+			double yaw = Math.toRadians(p.getYRot());
+			double sin = Math.sin(yaw);
+			double cos = Math.cos(yaw);
+			double mx = st * cos - f * sin;
+			double mz = f * cos + st * sin;
+			Vec3 v = p.getDeltaMovement();
+			double y = v.y;
+			if (bhop.value && p.onGround()) y = 0.42;
+			p.setDeltaMovement(mx * speed.value, y, mz * speed.value);
+		}
+	}
+
 	static class Flight extends Mod {
 		FloatSetting speed = num("Hiz", 0.1f, 0.05f, 0.5f);
 
@@ -707,6 +782,30 @@ public class ExampleModClient implements ClientModInitializer {
 		@Override
 		void onDisable(Minecraft mc) {
 			if (mc.player != null) mc.player.removeEffect(MobEffects.NIGHT_VISION);
+		}
+	}
+
+	static class FovChanger extends Mod {
+		FloatSetting fov = num("FOV", 30f, 5f, 110f);
+		int old = -1;
+
+		FovChanger() {
+			super("Zoom", "Render", -1);
+		}
+
+		@Override
+		void onEnable(Minecraft mc) {
+			old = mc.options.fov().get();
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			mc.options.fov().set((int) fov.value);
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			if (old > 0) mc.options.fov().set(old);
 		}
 	}
 
@@ -765,6 +864,37 @@ public class ExampleModClient implements ClientModInitializer {
 					moved++;
 				}
 			}
+		}
+	}
+
+	static class AntiAfk extends Mod {
+		AntiAfk() {
+			super("AntiAFK", "Player", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null) return;
+			if (tick % 400 == 0) {
+				p.swing(InteractionHand.MAIN_HAND);
+				p.setYRot(p.getYRot() + 4f);
+			}
+		}
+	}
+
+	static class AutoWalk extends Mod {
+		AutoWalk() {
+			super("AutoWalk", "Player", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen == null) mc.options.keyUp.setDown(true);
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			mc.options.keyUp.setDown(false);
 		}
 	}
 
@@ -834,7 +964,7 @@ public class ExampleModClient implements ClientModInitializer {
 		static String tab = "Combat";
 		static double scroll = 0;
 
-                            		Mod listening = null;
+		Mod listening = null;
 		FloatSetting dragSetting = null;
 		double downX = 0;
 		double downY = 0;
@@ -883,7 +1013,7 @@ public class ExampleModClient implements ClientModInitializer {
 			return list;
 		}
 
-		private void clampScroll() {
+					private void clampScroll() {
 			double maxScroll = Math.max(0, contentH - (bottom - top));
 			if (scroll > maxScroll) scroll = maxScroll;
 			if (scroll < 0) scroll = 0;
@@ -1086,5 +1216,4 @@ public class ExampleModClient implements ClientModInitializer {
 			super.onClose();
 		}
 	}
-                       }
-        
+				}
