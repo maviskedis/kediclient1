@@ -5,12 +5,19 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.CloudStatus;
+import net.minecraft.client.GraphicsStatus;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.Options;
+import net.minecraft.client.ParticleStatus;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
@@ -22,7 +29,9 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -32,6 +41,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -43,8 +53,11 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 public class ExampleModClient implements ClientModInitializer {
 	static final int ACCENT = 0xFFB388FF;
@@ -64,6 +77,28 @@ public class ExampleModClient implements ClientModInitializer {
 	static int frames = 0;
 	static int fpsValue = 0;
 	static long fpsStart = 0;
+	static Esp esp;
+	static ResourceEsp resEsp;
+	static BedEsp bedEsp;
+	static InvisEsp invisEsp;
+	static List<ItemEntity> resItems = new ArrayList<>();
+	static List<BlockPos> beds = new ArrayList<>();
+	static int eatTicks = 0;
+	static int eatOld = 0;
+	static NameTags nameTags;
+	static Aura aura;
+	static AntiCheat antiCheat;
+	static int wtapTicks = 0;
+	static final Map<UUID, Track> tracks = new HashMap<>();
+	static final Map<String, String> suspects = new HashMap<>();
+	static final Map<String, Long> suspectTick = new HashMap<>();
+	static ItemEsp itemEsp;
+	static HitParticles hitFx;
+	static List<ItemEntity> allItems = new ArrayList<>();
+	static final List<Long> leftClicks = new ArrayList<>();
+	static final List<Long> rightClicks = new ArrayList<>();
+	static boolean lastLeft = false;
+	static boolean lastRight = false;
 
 	// =====================================================
 	//  BASLANGIC
@@ -72,11 +107,15 @@ public class ExampleModClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		// Combat
 		criticals = new Criticals();
-		MODS.add(new Aura());
+		aura = new Aura();
+		MODS.add(aura);
 		MODS.add(new TriggerBot());
 		MODS.add(criticals);
 		MODS.add(new Velocity());
 		MODS.add(new AutoTotem());
+		MODS.add(new AutoClicker());
+		MODS.add(new AutoGApple());
+		MODS.add(new AutoPot());
 		// Elytra
 		MODS.add(new ElytraBooster());
 		MODS.add(new ElytraTarget());
@@ -87,10 +126,26 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(new NoFall());
 		MODS.add(new Flight());
 		MODS.add(new Speed());
+		MODS.add(new SafeWalk());
+		MODS.add(new Parkour());
+		MODS.add(new Glide());
+		MODS.add(new FastLadder());
+		MODS.add(new InvMove());
 		// Render
 		MODS.add(new Fullbright());
-		MODS.add(new Esp());
+		esp = new Esp();
+		MODS.add(esp);
 		MODS.add(new FovChanger());
+		nameTags = new NameTags();
+		itemEsp = new ItemEsp();
+		hitFx = new HitParticles();
+		MODS.add(nameTags);
+		MODS.add(itemEsp);
+		MODS.add(new Particles());
+		MODS.add(hitFx);
+		MODS.add(new TimeChanger());
+		MODS.add(new NoWeather());
+		MODS.add(new FpsBoost());
 		// Player
 		MODS.add(new AutoRespawn());
 		MODS.add(new ChestStealer());
@@ -99,14 +154,25 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(new AutoWalk());
 		MODS.add(new AutoTool());
 		// Bedwars
+		resEsp = new ResourceEsp();
+		bedEsp = new BedEsp();
+		invisEsp = new InvisEsp();
 		MODS.add(new Scaffold());
-		MODS.add(new ResourceGlow());
-		MODS.add(new BedFinder());
-		MODS.add(new InvisEsp());
+		MODS.add(resEsp);
+		MODS.add(bedEsp);
+		MODS.add(invisEsp);
+		MODS.add(new BlockIn());
+		// Macro (Player sekmesinde)
+		MODS.add(new MacroMod("Macro1", 1));
+		MODS.add(new MacroMod("Macro2", 2));
+		MODS.add(new MacroMod("Macro3", 3));
+		MODS.add(new MacroMod("Macro4", 8));
 		// Client
 		MODS.add(new ClickGuiMod());
 		hud = new HudMod();
 		MODS.add(hud);
+		antiCheat = new AntiCheat();
+		MODS.add(antiCheat);
 
 		loadConfig();
 
@@ -129,6 +195,17 @@ public class ExampleModClient implements ClientModInitializer {
 			lastPz = p.getZ();
 
 			long win = client.getWindow().getWindow();
+			long nowT = System.currentTimeMillis();
+			boolean lDown = GLFW.glfwGetMouseButton(win, 0) == GLFW.GLFW_PRESS;
+			boolean rDown = GLFW.glfwGetMouseButton(win, 1) == GLFW.GLFW_PRESS;
+			if (client.screen == null) {
+				if (lDown && !lastLeft) leftClicks.add(nowT);
+				if (rDown && !lastRight) rightClicks.add(nowT);
+			}
+			lastLeft = lDown;
+			lastRight = rDown;
+			leftClicks.removeIf(t0 -> nowT - t0 > 1000);
+			rightClicks.removeIf(t0 -> nowT - t0 > 1000);
 			for (Mod m : MODS) {
 				boolean down = isDown(win, m.key);
 				if (down && !m.keyDown && client.screen == null) {
@@ -136,6 +213,8 @@ public class ExampleModClient implements ClientModInitializer {
 				}
 				m.keyDown = down;
 			}
+
+						macroTick(client, p);
 
 			for (Mod m : MODS) {
 				if (!m.enabled) continue;
@@ -160,7 +239,7 @@ public class ExampleModClient implements ClientModInitializer {
 			}
 		});
 
-		HudRenderCallback.EVENT.register((g, delta) -> renderHud(g));
+		HudRenderCallback.EVENT.register((g, delta) -> renderHud(g, delta.getGameTimeDeltaPartialTick(true)));
 	}
 
 	// =====================================================
@@ -255,7 +334,7 @@ public class ExampleModClient implements ClientModInitializer {
 		return true;
 	}
 
-							static boolean useFirework(Minecraft mc, LocalPlayer p, boolean silent) {
+	static boolean useFirework(Minecraft mc, LocalPlayer p, boolean silent) {
 		if (p.getOffhandItem().is(Items.FIREWORK_ROCKET)) {
 			mc.gameMode.useItem(p, InteractionHand.OFF_HAND);
 			return true;
@@ -313,6 +392,465 @@ public class ExampleModClient implements ClientModInitializer {
 	}
 
 	// =====================================================
+	//  EKRANA CIZIM (ESP): dunyadan ekrana donusum
+	// =====================================================
+	static double[] project(Vec3 cam, float yawDeg, float pitchDeg, double fovDeg, int w, int h, double tx, double ty, double tz) {
+		double yaw = Math.toRadians(yawDeg);
+		double pit = Math.toRadians(pitchDeg);
+		double sy = Math.sin(yaw);
+		double cy = Math.cos(yaw);
+		double sp = Math.sin(pit);
+		double cp = Math.cos(pit);
+		double rx = tx - cam.x;
+		double ry = ty - cam.y;
+		double rz = tz - cam.z;
+		double zc = rx * (-sy * cp) + ry * (-sp) + rz * (cy * cp);
+		if (zc < 0.05) return null;
+		double xc = rx * (-cy) + rz * (-sy);
+		double yc = rx * (-sy * sp) + ry * cp + rz * (cy * sp);
+		double th = Math.tan(Math.toRadians(fovDeg) / 2.0);
+		double aspect = (double) w / (double) h;
+		double sx = w / 2.0 + (xc / (zc * th * aspect)) * (w / 2.0);
+		double sy2 = h / 2.0 - (yc / (zc * th)) * (h / 2.0);
+		return new double[] { sx, sy2, zc };
+	}
+
+	static void drawLine(GuiGraphics g, int x0, int y0, int x1, int y1, int color) {
+		int steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+		if (steps > 1500) return;
+		if (steps == 0) {
+			g.fill(x0, y0, x0 + 1, y0 + 1, color);
+			return;
+		}
+		for (int i = 0; i <= steps; i++) {
+			int x = x0 + (x1 - x0) * i / steps;
+			int y = y0 + (y1 - y0) * i / steps;
+			g.fill(x, y, x + 1, y + 1, color);
+		}
+	}
+
+	static void drawBox(GuiGraphics g, int x1, int y1, int x2, int y2, int color) {
+		g.fill(x1, y1, x2 + 1, y1 + 1, color);
+		g.fill(x1, y2, x2 + 1, y2 + 1, color);
+		g.fill(x1, y1, x1 + 1, y2 + 1, color);
+		g.fill(x2, y1, x2 + 1, y2 + 1, color);
+	}
+
+	static void espEntity(GuiGraphics g, Minecraft mc, Vec3 cam, float yaw, float pitch, double fov,
+			int sw, int sh, double ex, double ey, double ez, double halfW, double height,
+			String label, int color, float hpFrac) {
+		double minX = 1e9;
+		double minY = 1e9;
+		double maxX = -1e9;
+		double maxY = -1e9;
+		for (int i = 0; i < 8; i++) {
+			double cx = ex + ((i & 1) == 0 ? -halfW : halfW);
+			double cyy = ey + ((i & 2) == 0 ? 0 : height);
+			double cz = ez + ((i & 4) == 0 ? -halfW : halfW);
+			double[] sp = project(cam, yaw, pitch, fov, sw, sh, cx, cyy, cz);
+			if (sp == null) return;
+			minX = Math.min(minX, sp[0]);
+			minY = Math.min(minY, sp[1]);
+			maxX = Math.max(maxX, sp[0]);
+			maxY = Math.max(maxY, sp[1]);
+		}
+		if (maxX - minX > sw * 3 || maxY - minY > sh * 3) return;
+		int x1 = (int) minX;
+		int y1 = (int) minY;
+		int x2 = (int) maxX;
+		int y2 = (int) maxY;
+		int midX = (x1 + x2) / 2;
+		if (esp.boxes.value) {
+			drawBox(g, x1, y1, x2, y2, color);
+		}
+		if (hpFrac >= 0f) {
+			int bh = (int) ((y2 - y1) * hpFrac);
+			g.fill(x1 - 4, y1, x1 - 2, y2 + 1, 0xFF2A2240);
+			g.fill(x1 - 4, y2 + 1 - bh, x1 - 2, y2 + 1, hpFrac > 0.5f ? 0xFF7CFFB0 : 0xFFFF7C7C);
+		}
+		if (esp.tracers.value) {
+			drawLine(g, sw / 2, sh, midX, y2, color);
+		}
+		if (label != null && !label.isEmpty()) {
+			g.drawString(mc.font, label, midX - mc.font.width(label) / 2, y1 - 10, color);
+		}
+	}
+
+						static boolean isValuable(ItemStack st) {
+		return st.is(Items.DIAMOND) || st.is(Items.EMERALD) || st.is(Items.GOLD_INGOT)
+			|| st.is(Items.NETHERITE_INGOT) || st.is(Items.TOTEM_OF_UNDYING)
+			|| st.is(Items.GOLDEN_APPLE) || st.is(Items.ENCHANTED_GOLDEN_APPLE)
+			|| st.is(Items.ENDER_PEARL) || st.is(Items.TNT) || st.is(Items.FIRE_CHARGE);
+	}
+
+	static void renderEsp(GuiGraphics g, Minecraft mc, LocalPlayer me, float pt, int sw, int sh) {
+		if (esp == null || mc.level == null) return;
+		boolean doAll = esp.enabled;
+		boolean doInv = invisEsp.enabled;
+		boolean doRes = resEsp.enabled;
+		boolean doBed = bedEsp.enabled;
+		boolean doTags = nameTags.enabled;
+		boolean doItems = itemEsp.enabled;
+		boolean doTarget = aura != null && aura.enabled && aura.showTarget.value
+			&& auraTarget != null && auraTarget.isAlive();
+		if (!doAll && !doInv && !doRes && !doBed && !doTags && !doItems && !doTarget) return;
+
+		Vec3 cam = me.getEyePosition(pt);
+		float yaw = me.getViewYRot(pt);
+		float pitch = me.getViewXRot(pt);
+		double fovMod = (me.getSpeed() / 0.1 + 1.0) / 2.0;
+		if (me.getAbilities().flying) fovMod *= 1.1;
+		fovMod = Math.max(0.7, Math.min(1.6, fovMod));
+		double fov = mc.options.fov().get() * fovMod * esp.fovMul.value;
+
+		if (doTarget) {
+			LivingEntity tg = auraTarget;
+			double tx = Mth.lerp(pt, tg.xo, tg.getX());
+			double ty = Mth.lerp(pt, tg.yo, tg.getY());
+			double tz = Mth.lerp(pt, tg.zo, tg.getZ());
+			espEntity(g, mc, cam, yaw, pitch, fov, sw, sh, tx, ty, tz,
+				tg.getBbWidth() / 2.0, tg.getBbHeight(), "", 0xFFFF4444, -1f);
+		}
+
+		if (doAll || doInv || doTags) {
+			for (Player o : mc.level.players()) {
+				if (o == me || !o.isAlive()) continue;
+				boolean inv = o.isInvisible();
+				double dist = me.distanceTo(o);
+				double ox = Mth.lerp(pt, o.xo, o.getX());
+				double oy = Mth.lerp(pt, o.yo, o.getY());
+				double oz = Mth.lerp(pt, o.zo, o.getZ());
+				float frac = Mth.clamp(o.getHealth() / Math.max(1f, o.getMaxHealth()), 0f, 1f);
+				int color = ACCENT;
+				if (inv) {
+					color = 0xFFFFD27C;
+				} else {
+					int tc = o.getTeamColor();
+					if (tc != 16777215 && tc != -1) color = 0xFF000000 | tc;
+				}
+				String oname = o.getName().getString();
+				String sus = suspects.get(oname);
+				boolean susOn = sus != null && tick - suspectTick.getOrDefault(oname, -9999L) < 1200;
+				if (susOn) color = 0xFFFF4444;
+
+				if ((doAll || (doInv && inv)) && dist <= esp.range.value) {
+					String label = "";
+					if (!doTags) {
+						if (esp.names.value) label = o.getName().getString();
+						if (esp.health.value) label = label + " " + (int) o.getHealth() + "hp";
+						label = label + " " + (int) dist + "m";
+						if (susOn) label = label + " [" + sus + "]";
+					}
+					espEntity(g, mc, cam, yaw, pitch, fov, sw, sh, ox, oy, oz,
+						o.getBbWidth() / 2.0, o.getBbHeight(), label, color,
+						esp.healthBar.value ? frac : -1f);
+				}
+
+				if (doTags && dist <= nameTags.range.value) {
+					double[] sp = project(cam, yaw, pitch, fov, sw, sh, ox, oy + o.getBbHeight() + 0.35, oz);
+					if (sp != null) {
+						String t1 = o.getName().getString();
+						if (nameTags.showHealth.value) t1 = t1 + " " + (int) o.getHealth() + "hp";
+						if (nameTags.showDist.value) t1 = t1 + " " + (int) dist + "m";
+						if (susOn) t1 = t1 + " [" + sus + "]";
+						int tw = mc.font.width(t1) + 6;
+						int x = (int) sp[0] - tw / 2;
+						int y = (int) sp[1] - 12;
+						g.fill(x, y, x + tw, y + 11, 0xB0000000);
+						g.drawString(mc.font, t1, x + 3, y + 2, color);
+						if (nameTags.showBar.value) {
+							g.fill(x, y + 11, x + tw, y + 13, 0xFF2A2240);
+							g.fill(x, y + 11, x + (int) (tw * frac), y + 13,
+								frac > 0.5f ? 0xFF7CFFB0 : 0xFFFF7C7C);
+						}
+						if (nameTags.showItem.value) {
+							ItemStack h = o.getMainHandItem();
+							if (!h.isEmpty()) {
+								String ht = h.getHoverName().getString();
+								g.drawString(mc.font, ht, (int) sp[0] - mc.font.width(ht) / 2, y + 15, 0xFFDDDDDD);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if (doRes) {
+			for (ItemEntity it : resItems) {
+				if (it.isRemoved()) continue;
+				ItemStack st = it.getItem();
+				String nm;
+				int col;
+				if (resEsp.diamond.value && st.is(Items.DIAMOND)) {
+					nm = "Elmas";
+					col = 0xFF55FFFF;
+				} else if (resEsp.emerald.value && st.is(Items.EMERALD)) {
+					nm = "Zumrut";
+					col = 0xFF55FF55;
+				} else if (resEsp.gold.value && st.is(Items.GOLD_INGOT)) {
+					nm = "Altin";
+					col = 0xFFFFAA00;
+				} else if (resEsp.iron.value && st.is(Items.IRON_INGOT)) {
+					nm = "Demir";
+					col = 0xFFFFFFFF;
+				} else {
+					continue;
+				}
+				double dist = me.distanceTo(it);
+				if (dist > resEsp.range.value) continue;
+				double ix = Mth.lerp(pt, it.xo, it.getX());
+				double iy = Mth.lerp(pt, it.yo, it.getY());
+				double iz = Mth.lerp(pt, it.zo, it.getZ());
+				double[] sp = project(cam, yaw, pitch, fov, sw, sh, ix, iy + 0.3, iz);
+				if (sp == null) continue;
+				int x = (int) sp[0];
+				int y = (int) sp[1];
+				g.fill(x - 2, y - 2, x + 3, y + 3, col);
+				String label = nm + " x" + st.getCount() + " " + (int) dist + "m";
+				g.drawString(mc.font, label, x - mc.font.width(label) / 2, y - 12, col);
+			}
+		}
+
+		if (doItems) {
+			for (ItemEntity it : allItems) {
+				if (it.isRemoved()) continue;
+				ItemStack st = it.getItem();
+				boolean val = isValuable(st);
+				if (itemEsp.onlyValuable.value && !val) continue;
+				double dist = me.distanceTo(it);
+				if (dist > itemEsp.range.value) continue;
+				double ix = Mth.lerp(pt, it.xo, it.getX());
+				double iy = Mth.lerp(pt, it.yo, it.getY());
+				double iz = Mth.lerp(pt, it.zo, it.getZ());
+				double[] sp = project(cam, yaw, pitch, fov, sw, sh, ix, iy + 0.3, iz);
+				if (sp == null) continue;
+				int x = (int) sp[0];
+				int y = (int) sp[1];
+				int col = val ? 0xFFFFD27C : 0xFFDDDDDD;
+				g.fill(x - 2, y - 2, x + 3, y + 3, col);
+				String label = st.getHoverName().getString() + " x" + st.getCount() + " " + (int) dist + "m";
+				g.drawString(mc.font, label, x - mc.font.width(label) / 2, y - 12, col);
+			}
+		}
+
+		if (doBed) {
+			for (BlockPos bp : beds) {
+				double dist = Math.sqrt(bp.distToCenterSqr(me.getX(), me.getY(), me.getZ()));
+				double[] sp = project(cam, yaw, pitch, fov, sw, sh, bp.getX() + 0.5, bp.getY() + 0.5, bp.getZ() + 0.5);
+				if (sp == null) continue;
+				int x = (int) sp[0];
+				int y = (int) sp[1];
+				g.fill(x - 3, y - 3, x + 4, y + 4, 0xFFFF5555);
+				String label = "YATAK " + (int) dist + "m";
+				g.drawString(mc.font, label, x - mc.font.width(label) / 2, y - 13, 0xFFFF5555);
+			}
+		}
+	}
+
+	static void keyBox(GuiGraphics g, Minecraft mc, int x, int y, String t, boolean down) {
+		g.fill(x, y, x + 16, y + 16, down ? 0xC0B388FF : 0x90000000);
+		g.drawString(mc.font, t, x + 8 - mc.font.width(t) / 2, y + 4, 0xFFFFFFFF);
+	}
+
+	// =====================================================
+	//  PARTIKUL YARDIMCILARI
+	// =====================================================
+	static final String[] PARTICLE_NAMES = {
+		"Kritik", "Kalp", "Alev", "Yildiz", "Buyu", "Yesil", "Havai fisek", "Vurus"
+	};
+
+																			   	static ParticleOptions particleFor(int i) {
+		switch (i) {
+			case 1:
+				return ParticleTypes.HEART;
+			case 2:
+				return ParticleTypes.FLAME;
+			case 3:
+				return ParticleTypes.END_ROD;
+			case 4:
+				return ParticleTypes.ENCHANT;
+			case 5:
+				return ParticleTypes.HAPPY_VILLAGER;
+			case 6:
+				return ParticleTypes.FIREWORK;
+			case 7:
+				return ParticleTypes.ENCHANTED_HIT;
+			default:
+				return ParticleTypes.CRIT;
+		}
+	}
+
+	static double rnd() {
+		return java.util.concurrent.ThreadLocalRandom.current().nextDouble();
+	}
+
+	static void hitEffect(Minecraft mc, Entity e) {
+		if (hitFx == null || !hitFx.enabled || mc.level == null) return;
+		ParticleOptions opt = particleFor(hitFx.type.index);
+		int n = (int) hitFx.amount.value;
+		for (int i = 0; i < n; i++) {
+			double rx = (rnd() - 0.5) * 0.8;
+			double ry = rnd() * e.getBbHeight();
+			double rz = (rnd() - 0.5) * 0.8;
+			mc.level.addParticle(opt, e.getX() + rx, e.getY() + ry, e.getZ() + rz, 0, 0.1, 0);
+		}
+	}
+
+	static boolean useDown(Minecraft mc, LocalPlayer p, Item item) {
+		int slot = hotbarSlot(p, item);
+		if (slot == -1) return false;
+		float oldPitch = p.getXRot();
+		int old = p.getInventory().selected;
+		p.getInventory().selected = slot;
+		p.setXRot(90f);
+		mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
+		p.setXRot(oldPitch);
+		p.getInventory().selected = old;
+		return true;
+	}
+
+	// =====================================================
+	//  MAKRO EYLEMLERI
+	// =====================================================
+	static final String[] ACTIONS = {
+		"Yok", "Pearl at", "Altin elma ye", "Totem tak", "Kilic sec",
+		"Blok sec", "Roket kullan", "Elytra tak/cikar", "Su kovasi (asagi)",
+		"Ates topu (asagi)", "Pot at (asagi)"
+	};
+
+	static int hotbarSlot(LocalPlayer p, Item item) {
+		for (int i = 0; i < 9; i++) {
+			if (p.getInventory().getItem(i).is(item)) return i;
+		}
+		return -1;
+	}
+
+	static boolean useSilently(Minecraft mc, LocalPlayer p, Item item) {
+		int slot = hotbarSlot(p, item);
+		if (slot == -1) return false;
+		int old = p.getInventory().selected;
+		p.getInventory().selected = slot;
+		mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
+		p.getInventory().selected = old;
+		return true;
+	}
+
+	static void startEat(Minecraft mc, LocalPlayer p) {
+		if (eatTicks > 0) return;
+		int slot = hotbarSlot(p, Items.GOLDEN_APPLE);
+		if (slot == -1) slot = hotbarSlot(p, Items.ENCHANTED_GOLDEN_APPLE);
+		if (slot == -1) return;
+		eatOld = p.getInventory().selected;
+		p.getInventory().selected = slot;
+		eatTicks = 36;
+	}
+
+	static void macroTick(Minecraft mc, LocalPlayer p) {
+		if (eatTicks > 0) {
+			mc.options.keyUse.setDown(true);
+			eatTicks--;
+			if (eatTicks == 0) {
+				mc.options.keyUse.setDown(false);
+				p.getInventory().selected = eatOld;
+			}
+		}
+	}
+
+	static void totemToOffhand(Minecraft mc, LocalPlayer p) {
+		if (p.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) return;
+		for (int i = 9; i <= 44; i++) {
+			if (p.inventoryMenu.getSlot(i).getItem().is(Items.TOTEM_OF_UNDYING)) {
+				mc.gameMode.handleInventoryMouseClick(
+					p.inventoryMenu.containerId, i, 40, ClickType.SWAP, p);
+				return;
+			}
+		}
+	}
+
+	static void selectBlock(LocalPlayer p) {
+		for (int i = 0; i < 9; i++) {
+			if (p.getInventory().getItem(i).getItem() instanceof BlockItem) {
+				p.getInventory().selected = i;
+				return;
+			}
+		}
+	}
+
+	static void waterClutch(Minecraft mc, LocalPlayer p) {
+		int slot = hotbarSlot(p, Items.WATER_BUCKET);
+		if (slot == -1) return;
+		float oldPitch = p.getXRot();
+		int old = p.getInventory().selected;
+		p.getInventory().selected = slot;
+		p.setXRot(90f);
+		mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
+		p.setXRot(oldPitch);
+		p.getInventory().selected = old;
+	}
+
+	static void runMacro(Minecraft mc, int a) {
+		LocalPlayer p = mc.player;
+		if (p == null || mc.screen != null || mc.gameMode == null) return;
+		switch (a) {
+			case 1:
+				useSilently(mc, p, Items.ENDER_PEARL);
+				break;
+			case 2:
+				startEat(mc, p);
+				break;
+			case 3:
+				totemToOffhand(mc, p);
+				break;
+			case 4:
+				equipBestSword(p);
+				break;
+			case 5:
+				selectBlock(p);
+				break;
+			case 6:
+				useFirework(mc, p, true);
+				break;
+			case 7:
+				swapChest(mc, p, !p.getItemBySlot(EquipmentSlot.CHEST).is(Items.ELYTRA), false);
+				break;
+			case 8:
+				useDown(mc, p, Items.WATER_BUCKET);
+				break;
+			case 9:
+				useDown(mc, p, Items.FIRE_CHARGE);
+				break;
+			case 10:
+				useDown(mc, p, Items.SPLASH_POTION);
+				break;
+			default:
+				break;
+		}
+	}
+
+	static Vec3 aimAt(LivingEntity e, int mode, float predict) {
+		double f = mode == 1 ? 0.9 : (mode == 2 ? 0.15 : 0.6);
+		Vec3 mv = e.getDeltaMovement();
+		return e.position().add(mv.x * predict, 0, mv.z * predict).add(0, e.getBbHeight() * f, 0);
+	}
+
+	static boolean placeAt(Minecraft mc, LocalPlayer p, BlockPos target) {
+		Direction[] order = {
+			Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST,
+			Direction.DOWN, Direction.UP
+		};
+		for (Direction d : order) {
+			BlockPos np = target.relative(d);
+			if (mc.level.getBlockState(np).isAir()) continue;
+			Direction face = d.getOpposite();
+			Vec3 hitVec = Vec3.atCenterOf(np).add(
+				face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+			mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(hitVec, face, np, false));
+			return true;
+		}
+		return false;
+	}
+
+	// =====================================================
 	//  CONFIG
 	// =====================================================
 	static Path cfgPath() {
@@ -364,7 +902,7 @@ public class ExampleModClient implements ClientModInitializer {
 	// =====================================================
 	//  HUD (isim, modul listesi, acilis yazisi)
 	// =====================================================
-	static void renderHud(GuiGraphics g) {
+	static void renderHud(GuiGraphics g, float pt) {
 		Minecraft mc = Minecraft.getInstance();
 		frames++;
 		long nowMs = System.currentTimeMillis();
@@ -373,12 +911,14 @@ public class ExampleModClient implements ClientModInitializer {
 			frames = 0;
 			fpsStart = nowMs;
 		}
-		if (mc.player == null || mc.options.hideGui || hud == null || !hud.enabled) return;
+		if (mc.player == null || mc.options.hideGui) return;
 		LocalPlayer me = mc.player;
 		int sw = mc.getWindow().getGuiScaledWidth();
 		int sh = mc.getWindow().getGuiScaledHeight();
+		renderEsp(g, mc, me, pt, sw, sh);
+		if (hud == null || !hud.enabled) return;
 
-		if (hud.watermark.value) {
+					if (hud.watermark.value) {
 			String t = "KediClient";
 			String info = " | " + mc.getUser().getName();
 			int w = mc.font.width(t + info) + 8;
@@ -424,6 +964,32 @@ public class ExampleModClient implements ClientModInitializer {
 			lines.add(String.format("Yatak: %.0f blok (%d %d %d)",
 				bedDist, bedPos.getX(), bedPos.getY(), bedPos.getZ()));
 		}
+		if (hud.cpsHud.value) {
+			lines.add("CPS: " + leftClicks.size() + " | " + rightClicks.size());
+		}
+		if (hud.armor.value) {
+			EquipmentSlot[] slots = { EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET };
+			StringBuilder sb = new StringBuilder("Zirh:");
+			for (EquipmentSlot es : slots) {
+				ItemStack st = me.getItemBySlot(es);
+				if (st.isEmpty()) {
+					sb.append(" -");
+				} else if (st.getMaxDamage() <= 0) {
+					sb.append(" ok");
+				} else {
+					sb.append(" ").append((st.getMaxDamage() - st.getDamageValue()) * 100 / st.getMaxDamage()).append("%");
+				}
+			}
+			lines.add(sb.toString());
+		}
+		if (antiCheat != null && antiCheat.enabled) {
+			int shown = 0;
+			for (Map.Entry<String, String> en : suspects.entrySet()) {
+				if (shown >= 4) break;
+				lines.add("! " + en.getKey() + ": " + en.getValue());
+				shown++;
+			}
+		}
 		int iy = 20;
 		for (String line : lines) {
 			int w = mc.font.width(line) + 6;
@@ -431,6 +997,15 @@ public class ExampleModClient implements ClientModInitializer {
 			g.fill(3, iy, 5, iy + 11, ACCENT);
 			g.drawString(mc.font, line, 8, iy + 2, 0xFFE0E0E0);
 			iy += 11;
+		}
+
+		if (hud.keys.value) {
+			int kx = sw - 56;
+			int ky = sh - 62;
+			keyBox(g, mc, kx + 18, ky, "W", mc.options.keyUp.isDown());
+			keyBox(g, mc, kx, ky + 18, "A", mc.options.keyLeft.isDown());
+			keyBox(g, mc, kx + 18, ky + 18, "S", mc.options.keyDown.isDown());
+			keyBox(g, mc, kx + 36, ky + 18, "D", mc.options.keyRight.isDown());
 		}
 
 		if (hud.arrayList.value) {
@@ -494,7 +1069,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-				// =====================================================
+	// =====================================================
 	//  AYAR SINIFLARI
 	// =====================================================
 	static abstract class Setting {
@@ -596,7 +1171,7 @@ public class ExampleModClient implements ClientModInitializer {
 		int key;
 		final List<Setting> settings = new ArrayList<>();
 
-		Mod(String name, String category, int key) {
+						 		Mod(String name, String category, int key) {
 			this.name = name;
 			this.category = category;
 			this.key = key;
@@ -650,17 +1225,42 @@ public class ExampleModClient implements ClientModInitializer {
 	// =====================================================
 	//  COMBAT
 	// =====================================================
+	static class Cand {
+		final LivingEntity e;
+		final double score;
+
+		Cand(LivingEntity e, double score) {
+			this.e = e;
+			this.score = score;
+		}
+	}
+
 	static class Aura extends Mod {
 		FloatSetting targetRange = num("Hedef menzili", 5f, 3f, 8f);
 		FloatSetting attackRange = num("Vurus menzili", 3.5f, 2f, 6f);
-		BoolSetting players = bool("Sadece oyuncu", true);
+		ModeSetting attackMode = mode("Mod", 0, "Tek", "Degistir", "Coklu");
+		ModeSetting priority = mode("Oncelik", 0, "Mesafe", "Can", "Aci");
+		BoolSetting playersT = bool("Oyuncular", true);
+		BoolSetting mobsT = bool("Canavarlar", false);
+		BoolSetting animalsT = bool("Hayvanlar", false);
 		BoolSetting skipBots = bool("Bot atla", false);
 		BoolSetting teams = bool("Takim atla", true);
+		BoolSetting walls = bool("Duvar arkasi atla", true);
+		ModeSetting aimPoint = mode("Hedef noktasi", 0, "Govde", "Bas", "Ayak");
+		FloatSetting predict = num("Tahmin", 0f, 0f, 5f);
 		ModeSetting rotMode = mode("Rotasyon", 0, "Smooth", "Silent", "Yok");
 		FloatSetting turnSpeed = num("Don hizi", 20f, 3f, 90f);
 		FloatSetting aimAngle = num("Vurus acisi", 25f, 5f, 90f);
 		FloatSetting fov = num("Hedef FOV", 360f, 30f, 360f);
+		BoolSetting waitCd = bool("Cooldown bekle", true);
+		FloatSetting cps = num("CPS", 12f, 1f, 20f);
 		BoolSetting autoSword = bool("Oto kilic", true);
+		BoolSetting wtap = bool("WTap (geri tepme)", true);
+		BoolSetting critWait = bool("Kritik bekle", false);
+		BoolSetting hurtWait = bool("Hurt bekle", false);
+		BoolSetting showTarget = bool("Hedef kutusu", true);
+		long lastAtk = 0;
+		int switchIdx = 0;
 
 		Aura() {
 			super("Aura", "Combat", GLFW.GLFW_KEY_K);
@@ -675,38 +1275,76 @@ public class ExampleModClient implements ClientModInitializer {
 		void onTick(Minecraft mc, LocalPlayer p) {
 			auraTarget = null;
 			if (mc.screen != null || !p.isAlive()) return;
-			LivingEntity best = null;
-			double bestDist = targetRange.value;
+
+			List<Cand> cands = new ArrayList<>();
 			List<LivingEntity> list = mc.level.getEntitiesOfClass(
 				LivingEntity.class, p.getBoundingBox().inflate(targetRange.value),
 				x -> x != p && x.isAlive() && !x.isSpectator());
 			for (LivingEntity e : list) {
-				if (players.value && !(e instanceof Player)) continue;
+				boolean isPlayer = e instanceof Player;
+				boolean isMob = e instanceof Enemy;
+				boolean isAnimal = e instanceof Animal;
+				if (isPlayer) {
+					if (!playersT.value) continue;
+				} else if (isMob) {
+					if (!mobsT.value) continue;
+				} else if (isAnimal) {
+					if (!animalsT.value) continue;
+				} else {
+					continue;
+				}
 				if (skipBots.value && e instanceof Player pl && isBot(mc, pl)) continue;
 				if (teams.value && p.isAlliedTo(e)) continue;
 				double d = p.distanceTo(e);
 				if (d > targetRange.value) continue;
-				if (fov.value < 360f) {
-					float[] r0 = rotationTo(p, aimPoint(e));
-					if (angleDiff(p, r0) > fov.value / 2f) continue;
-				}
-				if (d < bestDist) {
-					bestDist = d;
-					best = e;
-				}
+				if (walls.value && !p.hasLineOfSight(e)) continue;
+				float[] r0 = rotationTo(p, aimAt(e, aimPoint.index, 0f));
+				float diff = angleDiff(p, r0);
+				if (fov.value < 360f && diff > fov.value / 2f) continue;
+				double score;
+				if (priority.index == 1) score = e.getHealth();
+				else if (priority.index == 2) score = diff;
+				else score = d;
+				cands.add(new Cand(e, score));
 			}
-			if (best == null) return;
-			auraTarget = best;
+			if (cands.isEmpty()) return;
+			cands.sort((a, b) -> Double.compare(a.score, b.score));
 
-			float[] rot = rotationTo(p, aimPoint(best));
+			LivingEntity primary = cands.get(0).e;
+			if (attackMode.is("Degistir") && cands.size() > 1) {
+				primary = cands.get(switchIdx % cands.size()).e;
+			}
+			auraTarget = primary;
+
+			float[] rot = rotationTo(p, aimAt(primary, aimPoint.index, predict.value));
 			boolean smooth = rotMode.is("Smooth");
 			boolean silent = rotMode.is("Silent");
 			if (smooth) {
 				rotateToward(p, rot, turnSpeed.value);
 			}
-			if (p.distanceTo(best) > attackRange.value) return;
-			if (p.getAttackStrengthScale(0.5f) < 1.0f) return;
+
+			List<LivingEntity> toHit = new ArrayList<>();
+			if (attackMode.is("Coklu")) {
+				for (Cand c : cands) {
+					if (toHit.size() >= 4) break;
+					if (p.distanceTo(c.e) <= attackRange.value) toHit.add(c.e);
+				}
+			} else if (p.distanceTo(primary) <= attackRange.value) {
+				toHit.add(primary);
+			}
+			if (toHit.isEmpty()) return;
+
+			long now = System.currentTimeMillis();
+			boolean ready;
+			if (waitCd.value) {
+				ready = p.getAttackStrengthScale(0.5f) >= 1.0f;
+			} else {
+				ready = now - lastAtk >= (long) (1000.0 / cps.value);
+			}
+			if (!ready) return;
 			if (smooth && angleDiff(p, rot) > aimAngle.value) return;
+			if (critWait.value && (p.onGround() || p.fallDistance <= 0f)) return;
+			if (hurtWait.value && primary.hurtTime > 0 && !attackMode.is("Coklu")) return;
 
 			if (autoSword.value) equipBestSword(p);
 			if (criticals != null && criticals.enabled) {
@@ -715,10 +1353,19 @@ public class ExampleModClient implements ClientModInitializer {
 			if (silent) {
 				p.connection.send(new ServerboundMovePlayerPacket.Rot(rot[0], rot[1], p.onGround()));
 			}
-			mc.gameMode.attack(p, best);
+			for (LivingEntity t : toHit) {
+				mc.gameMode.attack(p, t);
+				hitEffect(mc, t);
+			}
 			p.swing(InteractionHand.MAIN_HAND);
 			if (silent) {
 				p.connection.send(new ServerboundMovePlayerPacket.Rot(p.getYRot(), p.getXRot(), p.onGround()));
+			}
+			lastAtk = now;
+			switchIdx++;
+			if (wtap.value && p.isSprinting()) {
+				p.setSprinting(false);
+				wtapTicks = 2;
 			}
 		}
 	}
@@ -760,7 +1407,7 @@ public class ExampleModClient implements ClientModInitializer {
 		double lastHz = 0;
 		double lastY = 0;
 
-		Velocity() {
+						Velocity() {
 			super("Velocity", "Combat", -1);
 		}
 
@@ -788,7 +1435,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-					static class Criticals extends Mod {
+	static class Criticals extends Mod {
 		Criticals() {
 			super("Criticals", "Combat", -1);
 		}
@@ -804,6 +1451,8 @@ public class ExampleModClient implements ClientModInitializer {
 	}
 
 	static class AutoTotem extends Mod {
+		FloatSetting minHealth = num("Min can", 20f, 2f, 20f);
+
 		AutoTotem() {
 			super("AutoTotem", "Combat", GLFW.GLFW_KEY_J);
 		}
@@ -811,13 +1460,73 @@ public class ExampleModClient implements ClientModInitializer {
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
 			if (tick % 4 != 0) return;
-			if (p.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) return;
-			for (int i = 9; i <= 44; i++) {
-				if (p.inventoryMenu.getSlot(i).getItem().is(Items.TOTEM_OF_UNDYING)) {
-					mc.gameMode.handleInventoryMouseClick(
-						p.inventoryMenu.containerId, i, 40, ClickType.SWAP, p);
-					break;
+			if (p.getHealth() > minHealth.value) return;
+			totemToOffhand(mc, p);
+		}
+	}
+
+	static class AutoClicker extends Mod {
+		FloatSetting cps = num("CPS", 10f, 1f, 20f);
+		BoolSetting teams = bool("Takim atla", true);
+		long last = 0;
+
+		AutoClicker() {
+			super("AutoClicker", "Combat", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || !mc.options.keyAttack.isDown()) return;
+			if (mc.hitResult instanceof EntityHitResult hit) {
+				Entity e = hit.getEntity();
+				if (!(e instanceof LivingEntity) || !e.isAlive()) return;
+				if (teams.value && p.isAlliedTo(e)) return;
+				long now = System.currentTimeMillis();
+				if (now - last >= (long) (1000.0 / cps.value)) {
+					last = now;
+					mc.gameMode.attack(p, e);
+					p.swing(InteractionHand.MAIN_HAND);
+					hitEffect(mc, e);
 				}
+			}
+		}
+	}
+
+	static class AutoPot extends Mod {
+		FloatSetting health = num("Can esigi", 10f, 2f, 18f);
+		FloatSetting delay = num("Gecikme (tick)", 20f, 5f, 60f);
+		int cd = 0;
+
+		AutoPot() {
+			super("AutoPot", "Combat", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (cd > 0) cd--;
+			if (mc.screen != null || cd > 0) return;
+			if (p.getHealth() > health.value) return;
+			if (useDown(mc, p, Items.SPLASH_POTION)) {
+				cd = (int) delay.value;
+			}
+		}
+	}
+
+	static class AutoGApple extends Mod {
+		FloatSetting health = num("Can esigi", 8f, 2f, 18f);
+		int cd = 0;
+
+		AutoGApple() {
+			super("AutoGApple", "Combat", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (cd > 0) cd--;
+			if (mc.screen != null) return;
+			if (p.getHealth() <= health.value && eatTicks == 0 && cd == 0) {
+				startEat(mc, p);
+				cd = 120;
 			}
 		}
 	}
@@ -945,7 +1654,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class ElytraFirework extends Mod {
+			static class ElytraFirework extends Mod {
 		BoolSetting silent = bool("Silent", true);
 
 		ElytraFirework() {
@@ -978,6 +1687,10 @@ public class ExampleModClient implements ClientModInitializer {
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
 			if (mc.screen != null) return;
+			if (wtapTicks > 0) {
+				wtapTicks--;
+				return;
+			}
 			if (mc.options.keyUp.isDown() && !p.isShiftKeyDown()
 					&& !p.horizontalCollision && p.getFoodData().getFoodLevel() > 6) {
 				p.setSprinting(true);
@@ -1028,7 +1741,116 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-							static class Flight extends Mod {
+	static class SafeWalk extends Mod {
+		boolean forced = false;
+
+		SafeWalk() {
+			super("SafeWalk", "Move", -1);
+		}
+
+		@Override
+		void onPreTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || !p.onGround() || p.getAbilities().flying) {
+				if (forced) {
+					mc.options.keyShift.setDown(false);
+					forced = false;
+				}
+				return;
+			}
+			Vec3 v = p.getDeltaMovement();
+			double hz = Math.sqrt(v.x * v.x + v.z * v.z);
+			Vec3 ahead = p.position().add(v.x * 3.0, 0, v.z * 3.0);
+			BlockPos bp = BlockPos.containing(ahead.x, p.getY() - 0.5, ahead.z);
+			boolean edge = hz > 0.01 && mc.level.getBlockState(bp).isAir();
+			if (edge) {
+				mc.options.keyShift.setDown(true);
+				forced = true;
+			} else if (forced) {
+				mc.options.keyShift.setDown(false);
+				forced = false;
+			}
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			if (forced) mc.options.keyShift.setDown(false);
+			forced = false;
+		}
+	}
+
+	static class Parkour extends Mod {
+		Parkour() {
+			super("Parkour", "Move", -1);
+		}
+
+		@Override
+		void onPreTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || !p.onGround() || p.isShiftKeyDown() || p.getAbilities().flying) return;
+			Vec3 v = p.getDeltaMovement();
+			double hz = Math.sqrt(v.x * v.x + v.z * v.z);
+			if (hz < 0.05) return;
+			Vec3 ahead = p.position().add(v.x * 2.0, 0, v.z * 2.0);
+			BlockPos bp = BlockPos.containing(ahead.x, p.getY() - 0.5, ahead.z);
+			if (mc.level.getBlockState(bp).isAir()) {
+				p.setDeltaMovement(v.x, 0.42, v.z);
+			}
+		}
+	}
+
+	static class Glide extends Mod {
+		FloatSetting fall = num("Dusme hizi", 0.1f, 0.02f, 0.3f);
+
+		Glide() {
+			super("Glide", "Move", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (p.onGround() || p.isFallFlying() || p.isInWater() || p.getAbilities().flying) return;
+			Vec3 v = p.getDeltaMovement();
+			if (v.y < -fall.value) {
+				p.setDeltaMovement(v.x, -fall.value, v.z);
+			}
+		}
+	}
+
+	static class FastLadder extends Mod {
+		FastLadder() {
+			super("FastLadder", "Move", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null) return;
+			if (p.onClimbable() && p.horizontalCollision) {
+				Vec3 v = p.getDeltaMovement();
+				p.setDeltaMovement(v.x, 0.3, v.z);
+			}
+		}
+	}
+
+	static class InvMove extends Mod {
+		InvMove() {
+			super("InvMove", "Move", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (!(mc.screen instanceof AbstractContainerScreen)) return;
+			long win = mc.getWindow().getWindow();
+			net.minecraft.client.KeyMapping[] ks = {
+				mc.options.keyUp, mc.options.keyDown, mc.options.keyLeft,
+				mc.options.keyRight, mc.options.keyJump, mc.options.keySprint
+			};
+			for (net.minecraft.client.KeyMapping km : ks) {
+				if (km.getKey().getType() == InputConstants.Type.KEYSYM) {
+					km.setDown(isDown(win, km.getKey().getValue()));
+				}
+			}
+		}
+	}
+
+	static class Flight extends Mod {
 		FloatSetting speed = num("Hiz", 0.1f, 0.05f, 0.5f);
 
 		Flight() {
@@ -1098,23 +1920,110 @@ public class ExampleModClient implements ClientModInitializer {
 	}
 
 	static class Esp extends Mod {
-		Esp() {
+		BoolSetting boxes = bool("Kutu", true);
+		BoolSetting healthBar = bool("Can cubugu", true);
+		BoolSetting tracers = bool("Cizgi (tracer)", false);
+		BoolSetting names = bool("Isim", true);
+		BoolSetting health = bool("Can yazisi", true);
+		FloatSetting range = num("Menzil", 120f, 20f, 300f);
+		FloatSetting fovMul = num("FOV ayari", 1.0f, 0.7f, 1.3f);
+
+						Esp() {
 			super("ESP", "Render", -1);
+		}
+	}
+
+	static class NameTags extends Mod {
+		BoolSetting showHealth = bool("Can yazisi", true);
+		BoolSetting showBar = bool("Can bari", true);
+		BoolSetting showDist = bool("Mesafe", true);
+		BoolSetting showItem = bool("Elindeki esya", true);
+		FloatSetting range = num("Menzil", 100f, 10f, 300f);
+
+		NameTags() {
+			super("NameTags", "Render", -1);
+		}
+	}
+
+	static class ItemEsp extends Mod {
+		BoolSetting onlyValuable = bool("Sadece degerli", false);
+		FloatSetting range = num("Menzil", 50f, 10f, 150f);
+
+		ItemEsp() {
+			super("ItemESP", "Render", -1);
 		}
 
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
-			for (Player o : mc.level.players()) {
-				if (o != p) o.setGlowingTag(true);
-			}
+			if (tick % 5 != 0) return;
+			allItems = mc.level.getEntitiesOfClass(
+				ItemEntity.class, p.getBoundingBox().inflate(range.value), x -> true);
 		}
 
 		@Override
 		void onDisable(Minecraft mc) {
-			if (mc.level == null) return;
-			for (Player o : mc.level.players()) {
-				o.setGlowingTag(false);
+			allItems = new ArrayList<>();
+		}
+	}
+
+	static class Particles extends Mod {
+		ModeSetting type = mode("Tur", 1, PARTICLE_NAMES);
+		FloatSetting amount = num("Miktar", 3f, 1f, 15f);
+		FloatSetting radius = num("Yaricap", 1.2f, 0.3f, 3f);
+		BoolSetting onlyMoving = bool("Sadece hareketliyken", false);
+
+		Particles() {
+			super("Particles", "Render", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (onlyMoving.value) {
+				Vec3 v = p.getDeltaMovement();
+				if (v.x * v.x + v.z * v.z < 0.0004) return;
 			}
+			ParticleOptions opt = particleFor(type.index);
+			int n = (int) amount.value;
+			for (int i = 0; i < n; i++) {
+				double rx = (rnd() - 0.5) * 2.0 * radius.value;
+				double ry = rnd() * 2.0;
+				double rz = (rnd() - 0.5) * 2.0 * radius.value;
+				mc.level.addParticle(opt, p.getX() + rx, p.getY() + ry, p.getZ() + rz, 0, 0.02, 0);
+			}
+		}
+	}
+
+	static class HitParticles extends Mod {
+		ModeSetting type = mode("Tur", 0, PARTICLE_NAMES);
+		FloatSetting amount = num("Miktar", 8f, 1f, 30f);
+
+		HitParticles() {
+			super("HitParticles", "Render", -1);
+		}
+	}
+
+	static class TimeChanger extends Mod {
+		FloatSetting time = num("Zaman (0-24000)", 6000f, 0f, 24000f);
+
+		TimeChanger() {
+			super("TimeChanger", "Render", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			mc.level.setDayTime((long) time.value);
+		}
+	}
+
+	static class NoWeather extends Mod {
+		NoWeather() {
+			super("NoWeather", "Render", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			mc.level.setRainLevel(0f);
+			mc.level.setThunderLevel(0f);
 		}
 	}
 
@@ -1226,7 +2135,9 @@ public class ExampleModClient implements ClientModInitializer {
 	// =====================================================
 	static class Scaffold extends Mod {
 		FloatSetting delay = num("Gecikme (tick)", 1f, 0f, 6f);
+		FloatSetting extend = num("Ileri uzatma", 0f, 0f, 3f);
 		BoolSetting autoSwitch = bool("Blok sec", true);
+		BoolSetting tower = bool("Kule (ziplayinca)", true);
 		BoolSetting swing = bool("El salla", true);
 		int cd = 0;
 
@@ -1241,110 +2152,159 @@ public class ExampleModClient implements ClientModInitializer {
 				cd--;
 				return;
 			}
-			BlockPos below = p.blockPosition().below();
-			if (!mc.level.getBlockState(below).isAir()) return;
-
-			if (autoSwitch.value) {
-				for (int i = 0; i < 9; i++) {
-					if (p.getInventory().getItem(i).getItem() instanceof BlockItem) {
-						p.getInventory().selected = i;
-						break;
-					}
-				}
+			if (autoSwitch.value && !(p.getMainHandItem().getItem() instanceof BlockItem)) {
+				selectBlock(p);
 			}
 			if (!(p.getMainHandItem().getItem() instanceof BlockItem)) return;
 
-			for (Direction d : Direction.values()) {
-				BlockPos np = below.relative(d);
-				if (mc.level.getBlockState(np).isAir()) continue;
-				Direction face = d.getOpposite();
-				Vec3 hitVec = Vec3.atCenterOf(np).add(
-					face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
-				BlockHitResult hr = new BlockHitResult(hitVec, face, np, false);
-				mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hr);
-				if (swing.value) p.swing(InteractionHand.MAIN_HAND);
-				cd = (int) delay.value;
-				break;
+			Vec3 v = p.getDeltaMovement();
+			double hz = Math.sqrt(v.x * v.x + v.z * v.z);
+			List<BlockPos> targets = new ArrayList<>();
+			targets.add(p.blockPosition().below());
+			if (extend.value > 0.01f && hz > 0.02) {
+				double dx = v.x / hz;
+				double dz = v.z / hz;
+				targets.add(BlockPos.containing(
+					p.getX() + dx * extend.value, p.getY() - 1, p.getZ() + dz * extend.value));
+			}
+			for (BlockPos t : targets) {
+				if (!mc.level.getBlockState(t).isAir()) continue;
+				if (placeAt(mc, p, t)) {
+					if (swing.value) p.swing(InteractionHand.MAIN_HAND);
+					boolean towering = tower.value && mc.options.keyJump.isDown();
+					cd = towering ? 0 : (int) delay.value;
+					break;
+				}
 			}
 		}
 	}
 
-	static class ResourceGlow extends Mod {
+	static class ResourceEsp extends Mod {
 		BoolSetting diamond = bool("Elmas", true);
 		BoolSetting emerald = bool("Zumrut", true);
 		BoolSetting gold = bool("Altin", true);
 		BoolSetting iron = bool("Demir", false);
-		FloatSetting range = num("Menzil", 40f, 10f, 100f);
+		FloatSetting range = num("Menzil", 60f, 10f, 150f);
 
-		ResourceGlow() {
-			super("ResourceGlow", "Bedwars", -1);
-		}
-
-		private boolean wanted(ItemStack st) {
-			return (diamond.value && st.is(Items.DIAMOND))
-				|| (emerald.value && st.is(Items.EMERALD))
-				|| (gold.value && st.is(Items.GOLD_INGOT))
-				|| (iron.value && st.is(Items.IRON_INGOT));
+		ResourceEsp() {
+			super("ResourceESP", "Bedwars", -1);
 		}
 
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
 			if (tick % 5 != 0) return;
-			List<ItemEntity> list = mc.level.getEntitiesOfClass(
+			resItems = mc.level.getEntitiesOfClass(
 				ItemEntity.class, p.getBoundingBox().inflate(range.value), x -> true);
-			for (ItemEntity it : list) {
-				it.setGlowingTag(wanted(it.getItem()));
-			}
 		}
 
-		@Override
+						@Override
 		void onDisable(Minecraft mc) {
-			if (mc.level == null || mc.player == null) return;
-			List<ItemEntity> list = mc.level.getEntitiesOfClass(
-				ItemEntity.class, mc.player.getBoundingBox().inflate(range.value), x -> true);
-			for (ItemEntity it : list) {
-				it.setGlowingTag(false);
-			}
+			resItems = new ArrayList<>();
 		}
 	}
 
-				 	static class BedFinder extends Mod {
-		FloatSetting radius = num("Yaricap", 16f, 4f, 32f);
+	static class BedEsp extends Mod {
+		FloatSetting radius = num("Yaricap", 32f, 8f, 64f);
+		int sliceX = Integer.MIN_VALUE;
+		BlockPos center = BlockPos.ZERO;
+		List<BlockPos> building = new ArrayList<>();
 
-		BedFinder() {
-			super("BedFinder", "Bedwars", -1);
+		BedEsp() {
+			super("BedESP", "Bedwars", -1);
 		}
 
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
-			if (tick % 20 != 0) return;
 			int r = (int) radius.value;
-			int ry = Math.min(r, 10);
-			BlockPos c = p.blockPosition();
-			double best = Double.MAX_VALUE;
-			BlockPos found = null;
-			for (int x = -r; x <= r; x++) {
+			int ry = Math.min(r, 24);
+			if (sliceX == Integer.MIN_VALUE) {
+				center = p.blockPosition();
+				sliceX = -r;
+				building = new ArrayList<>();
+			}
+			for (int n = 0; n < 2 && sliceX <= r; n++) {
 				for (int y = -ry; y <= ry; y++) {
 					for (int z = -r; z <= r; z++) {
-						BlockPos pos = c.offset(x, y, z);
+						BlockPos pos = center.offset(sliceX, y, z);
 						if (mc.level.getBlockState(pos).is(BlockTags.BEDS)) {
-							double d = pos.distSqr(c);
-							if (d < best) {
-								best = d;
-								found = pos;
-							}
+							building.add(pos);
 						}
 					}
 				}
+				sliceX++;
 			}
-			bedPos = found;
-			bedDist = found == null ? -1 : Math.sqrt(best);
+			if (sliceX > r) {
+				List<BlockPos> kept = new ArrayList<>();
+				for (BlockPos b : building) {
+					boolean dup = false;
+					for (BlockPos k : kept) {
+						if (b.distSqr(k) <= 2) {
+							dup = true;
+							break;
+						}
+					}
+					if (!dup) kept.add(b);
+				}
+				beds = kept;
+				sliceX = Integer.MIN_VALUE;
+			}
+			if (tick % 10 == 0) {
+				double best = Double.MAX_VALUE;
+				BlockPos found = null;
+				for (BlockPos b : beds) {
+					double d = b.distToCenterSqr(p.getX(), p.getY(), p.getZ());
+					if (d < best) {
+						best = d;
+						found = b;
+					}
+				}
+				bedPos = found;
+				bedDist = found == null ? -1 : Math.sqrt(best);
+			}
 		}
 
 		@Override
 		void onDisable(Minecraft mc) {
+			beds = new ArrayList<>();
 			bedPos = null;
 			bedDist = -1;
+			sliceX = Integer.MIN_VALUE;
+		}
+	}
+
+	static class BlockIn extends Mod {
+		int cd = 0;
+
+		BlockIn() {
+			super("BlockIn", "Bedwars", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null) return;
+			if (cd > 0) {
+				cd--;
+				return;
+			}
+			if (!(p.getMainHandItem().getItem() instanceof BlockItem)) selectBlock(p);
+			if (!(p.getMainHandItem().getItem() instanceof BlockItem)) return;
+			BlockPos f = p.blockPosition();
+			Direction[] hs = { Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST };
+			List<BlockPos> order = new ArrayList<>();
+			for (Direction d : hs) order.add(f.relative(d));
+			for (Direction d : hs) order.add(f.above().relative(d));
+			order.add(f.above(2));
+			boolean done = true;
+			for (BlockPos t : order) {
+				if (!mc.level.getBlockState(t).isAir()) continue;
+				done = false;
+				if (placeAt(mc, p, t)) {
+					p.swing(InteractionHand.MAIN_HAND);
+					cd = 1;
+					return;
+				}
+			}
+			if (done) toggle(mc);
 		}
 	}
 
@@ -1352,20 +2312,261 @@ public class ExampleModClient implements ClientModInitializer {
 		InvisEsp() {
 			super("InvisESP", "Bedwars", -1);
 		}
+	}
+
+	// =====================================================
+	//  MACRO
+	// =====================================================
+	static class MacroMod extends Mod {
+		ModeSetting action;
+
+		MacroMod(String name, int defaultAction) {
+			super(name, "Player", -1);
+			action = mode("Eylem", defaultAction, ACTIONS);
+		}
+
+		@Override
+		void onPress(Minecraft mc) {
+			runMacro(mc, action.index);
+		}
+
+		@Override
+		void toggle(Minecraft mc) {
+			runMacro(mc, action.index);
+		}
+	}
+
+	// =====================================================
+	//  ANTICHEAT (baskalarinin hilesini tespit eder)
+	// =====================================================
+	static class Track {
+		boolean init = false;
+		double x;
+		double y;
+		double z;
+		float yaw;
+		int speedVl = 0;
+		int hoverTicks = 0;
+		int riseTicks = 0;
+		int snapVl = 0;
+		long snapStart = 0;
+		long lastHurtTick = -1000;
+		final Map<String, Long> lastAlert = new HashMap<>();
+	}
+
+	static class AntiCheat extends Mod {
+		BoolSetting speedChk = bool("Speed kontrol", true);
+		BoolSetting flyChk = bool("Fly kontrol", true);
+		BoolSetting reachChk = bool("Reach kontrol", true);
+		BoolSetting aimChk = bool("Aura/Aim kontrol", true);
+		BoolSetting chat = bool("Sohbete yaz", true);
+		FloatSetting speedLimit = num("Speed siniri", 0.75f, 0.4f, 1.5f);
+		FloatSetting flyTicks = num("Fly suresi (tick)", 15f, 8f, 40f);
+		FloatSetting reachLimit = num("Reach siniri", 3.9f, 3.0f, 6f);
+		FloatSetting snapAngle = num("Donus siniri", 70f, 30f, 150f);
+		int lastMeHurt = 0;
+
+		AntiCheat() {
+			super("AntiCheat", "Client", -1);
+		}
+
+		private void flag(LocalPlayer me, Player o, Track t, String type, String info) {
+			Long last = t.lastAlert.get(type);
+			if (last != null && tick - last < 100) return;
+			t.lastAlert.put(type, (long) tick);
+			String name = o.getName().getString();
+			suspects.put(name, type);
+			suspectTick.put(name, (long) tick);
+			if (chat.value) {
+				me.displayClientMessage(
+					Component.literal("[AntiCheat] " + name + " -> " + type + " " + info), false);
+			}
+		}
 
 		@Override
 		void onTick(Minecraft mc, LocalPlayer p) {
+			boolean meHurtNow = p.hurtTime > lastMeHurt;
+			lastMeHurt = p.hurtTime;
 			for (Player o : mc.level.players()) {
-				if (o != p && o.isInvisible()) o.setGlowingTag(true);
+				if (o == p || !o.isAlive()) continue;
+				Track t = tracks.computeIfAbsent(o.getUUID(), k -> new Track());
+				double nx = o.getX();
+				double ny = o.getY();
+				double nz = o.getZ();
+				float nyaw = o.getYRot();
+				if (!t.init) {
+					t.init = true;
+					t.x = nx;
+					t.y = ny;
+					t.z = nz;
+					t.yaw = nyaw;
+					continue;
+				}
+				double dx = nx - t.x;
+				double dy = ny - t.y;
+				double dz = nz - t.z;
+				double hz = Math.sqrt(dx * dx + dz * dz);
+				float dyaw = Mth.wrapDegrees(nyaw - t.yaw);
+				t.x = nx;
+				t.y = ny;
+				t.z = nz;
+				t.yaw = nyaw;
+				if (hz > 8 || Math.abs(dy) > 8) {
+					t.speedVl = 0;
+					t.hoverTicks = 0;
+					t.riseTicks = 0;
+					continue;
+				}
+				if (o.hurtTime > 0) t.lastHurtTick = tick;
+				boolean exempt = o.isFallFlying() || o.isPassenger() || o.isSwimming()
+					|| o.isInWater() || o.isInLava() || o.onClimbable()
+					|| o.isSpectator() || o.isCreative() || tick - t.lastHurtTick < 30;
+
+				if (speedChk.value) {
+					if (!exempt && hz > speedLimit.value) t.speedVl++;
+					else if (t.speedVl > 0) t.speedVl--;
+					if (t.speedVl >= 5) {
+						flag(p, o, t, "Speed", String.format("%.2f b/tick", hz));
+						t.speedVl = 0;
+					}
+				}
+
+				if (flyChk.value) {
+					if (!o.onGround() && !exempt) {
+						boolean openAir = mc.level.getBlockState(
+							BlockPos.containing(nx, ny - 0.4, nz)).isAir();
+						if (openAir && Math.abs(dy) < 0.02) t.hoverTicks++;
+						else t.hoverTicks = 0;
+						if (dy > 0.08) t.riseTicks++;
+						else if (dy <= 0) t.riseTicks = 0;
+						if (t.hoverTicks >= flyTicks.value) {
+							flag(p, o, t, "Fly", "(havada duruyor)");
+							t.hoverTicks = 0;
+						}
+						if (t.riseTicks >= 14) {
+							flag(p, o, t, "Fly", "(yukari ucuyor)");
+							t.riseTicks = 0;
+						}
+					} else {
+						t.hoverTicks = 0;
+						t.riseTicks = 0;
+					}
+				}
+
+				if (aimChk.value && o.swinging && p.distanceTo(o) < 8
+						&& Math.abs(dyaw) > snapAngle.value) {
+					if (tick - t.snapStart > 60) {
+						t.snapStart = tick;
+						t.snapVl = 0;
+					}
+					t.snapVl++;
+					if (t.snapVl >= 3) {
+						flag(p, o, t, "Aura/Aim", "(ani donus)");
+						t.snapVl = 0;
+					}
+				}
+
+						if (reachChk.value && meHurtNow && o.swinging) {
+					AABB box = p.getBoundingBox();
+					Vec3 eye = o.getEyePosition();
+					double cx = Mth.clamp(eye.x, box.minX, box.maxX);
+					double cy = Mth.clamp(eye.y, box.minY, box.maxY);
+					double cz = Mth.clamp(eye.z, box.minZ, box.maxZ);
+					double ex = eye.x - cx;
+					double ey = eye.y - cy;
+					double ez = eye.z - cz;
+					double d = Math.sqrt(ex * ex + ey * ey + ez * ez);
+					if (d > reachLimit.value && d < 8) {
+						flag(p, o, t, "Reach", String.format("%.1f blok", d));
+					}
+				}
+			}
+
+			if (tick % 200 == 0) {
+				java.util.Set<UUID> present = new java.util.HashSet<>();
+				for (Player o : mc.level.players()) present.add(o.getUUID());
+				tracks.keySet().retainAll(present);
+			}
+			if (tick % 100 == 0) {
+				suspectTick.entrySet().removeIf(en -> tick - en.getValue() > 1200);
+				suspects.keySet().retainAll(suspectTick.keySet());
 			}
 		}
 
 		@Override
 		void onDisable(Minecraft mc) {
-			if (mc.level == null) return;
-			for (Player o : mc.level.players()) {
-				if (o.isInvisible()) o.setGlowingTag(false);
-			}
+			tracks.clear();
+			suspects.clear();
+			suspectTick.clear();
+		}
+	}
+
+	// =====================================================
+	//  FPS BOOST
+	// =====================================================
+	static class FpsBoost extends Mod {
+		FloatSetting dist = num("Gorus mesafesi", 8f, 2f, 32f);
+		BoolSetting fast = bool("Hizli grafik", true);
+		BoolSetting noClouds = bool("Bulut kapat", true);
+		BoolSetting minParticles = bool("Partikul azalt", true);
+		BoolSetting noShadows = bool("Golge kapat", true);
+		BoolSetting noBlend = bool("Biyom gecisi kapat", true);
+		FloatSetting entDist = num("Varlik mesafesi", 0.5f, 0.5f, 5f);
+		boolean saved = false;
+		int oldDist;
+		GraphicsStatus oldG;
+		CloudStatus oldC;
+		ParticleStatus oldP;
+		boolean oldS;
+		int oldB;
+		double oldE;
+
+		FpsBoost() {
+			super("FPSBoost", "Render", -1);
+		}
+
+		private void apply(Minecraft mc) {
+			Options o = mc.options;
+			o.renderDistance().set((int) dist.value);
+			if (fast.value) o.graphicsMode().set(GraphicsStatus.FAST);
+			if (noClouds.value) o.cloudStatus().set(CloudStatus.OFF);
+			if (minParticles.value) o.particles().set(ParticleStatus.MINIMAL);
+			if (noShadows.value) o.entityShadows().set(false);
+			if (noBlend.value) o.biomeBlendRadius().set(0);
+			o.entityDistanceScaling().set((double) entDist.value);
+		}
+
+		@Override
+		void onEnable(Minecraft mc) {
+			Options o = mc.options;
+			oldDist = o.renderDistance().get();
+			oldG = o.graphicsMode().get();
+			oldC = o.cloudStatus().get();
+			oldP = o.particles().get();
+			oldS = o.entityShadows().get();
+			oldB = o.biomeBlendRadius().get();
+			oldE = o.entityDistanceScaling().get();
+			saved = true;
+			apply(mc);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (tick % 40 == 0) apply(mc);
+		}
+
+		@Override
+		void onDisable(Minecraft mc) {
+			if (!saved) return;
+			Options o = mc.options;
+			o.renderDistance().set(oldDist);
+			o.graphicsMode().set(oldG);
+			o.cloudStatus().set(oldC);
+			o.particles().set(oldP);
+			o.entityShadows().set(oldS);
+			o.biomeBlendRadius().set(oldB);
+			o.entityDistanceScaling().set(oldE);
+			saved = false;
 		}
 	}
 
@@ -1401,6 +2602,9 @@ public class ExampleModClient implements ClientModInitializer {
 		BoolSetting time = bool("Saat", false);
 		BoolSetting counters = bool("Totem/Roket sayaci", true);
 		BoolSetting bed = bool("Yatak bilgisi", true);
+		BoolSetting cpsHud = bool("CPS sayaci", true);
+		BoolSetting keys = bool("Tuslar (WASD)", false);
+		BoolSetting armor = bool("Zirh durumu", false);
 
 		HudMod() {
 			super("HUD", "Client", -1);
@@ -1513,7 +2717,7 @@ public class ExampleModClient implements ClientModInitializer {
 					sel ? 0xFFFFFFFF : 0xFFAAAAAA);
 			}
 
-			// icerik
+							// icerik
 			g.fill(px, top, px + pw, bottom, 0xD00C0816);
 			List<Row> rows = buildRows();
 			clampScroll();
@@ -1567,7 +2771,7 @@ public class ExampleModClient implements ClientModInitializer {
 			}
 		}
 
-				 		private void setSlider(FloatSetting fs, double mx) {
+		private void setSlider(FloatSetting fs, double mx) {
 			double x0 = px + 6;
 			double x1 = px + pw - 6;
 			double f = Math.max(0.0, Math.min(1.0, (mx - x0) / (x1 - x0)));
