@@ -22,6 +22,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -162,6 +163,7 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(bedEsp);
 		MODS.add(invisEsp);
 		MODS.add(new BlockIn());
+		MODS.add(new Nuker());
 		// Macro (Player sekmesinde)
 		MODS.add(new MacroMod("Macro1", 1));
 		MODS.add(new MacroMod("Macro2", 2));
@@ -173,6 +175,7 @@ public class ExampleModClient implements ClientModInitializer {
 		MODS.add(hud);
 		antiCheat = new AntiCheat();
 		MODS.add(antiCheat);
+		MODS.add(new CfgMod());
 
 		loadConfig();
 
@@ -214,7 +217,7 @@ public class ExampleModClient implements ClientModInitializer {
 				m.keyDown = down;
 			}
 
-				 			macroTick(client, p);
+												  			macroTick(client, p);
 
 			for (Mod m : MODS) {
 				if (!m.enabled) continue;
@@ -367,6 +370,10 @@ public class ExampleModClient implements ClientModInitializer {
 		Items.STONE_SWORD, Items.GOLDEN_SWORD, Items.WOODEN_SWORD
 	};
 
+	static boolean isWeapon(ItemStack st) {
+		return st.is(ItemTags.SWORDS) || st.is(ItemTags.AXES);
+	}
+
 	static void equipBestSword(LocalPlayer p) {
 		for (Item sw : SWORDS) {
 			for (int i = 0; i < 9; i++) {
@@ -473,10 +480,10 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 		if (label != null && !label.isEmpty()) {
 			g.drawString(mc.font, label, midX - mc.font.width(label) / 2, y1 - 10, color);
-		}
+				}
 	}
 
-		static boolean isValuable(ItemStack st) {
+	static boolean isValuable(ItemStack st) {
 		return st.is(Items.DIAMOND) || st.is(Items.EMERALD) || st.is(Items.GOLD_INGOT)
 			|| st.is(Items.NETHERITE_INGOT) || st.is(Items.TOTEM_OF_UNDYING)
 			|| st.is(Items.GOLDEN_APPLE) || st.is(Items.ENCHANTED_GOLDEN_APPLE)
@@ -659,7 +666,7 @@ public class ExampleModClient implements ClientModInitializer {
 		"Kritik", "Kalp", "Alev", "Yildiz", "Buyu", "Yesil", "Havai fisek", "Vurus"
 	};
 
-					static ParticleOptions particleFor(int i) {
+								static ParticleOptions particleFor(int i) {
 		switch (i) {
 			case 1:
 				return ParticleTypes.HEART;
@@ -857,7 +864,63 @@ public class ExampleModClient implements ClientModInitializer {
 		return FabricLoader.getInstance().getConfigDir().resolve("kediclient.properties");
 	}
 
-	static void saveConfig() {
+	static Path slotPath(int i) {
+		return FabricLoader.getInstance().getConfigDir().resolve("kediclient_cfg" + (i + 1) + ".properties");
+	}
+
+	static void saveTo(Path f) {
+		try {
+			Properties pr = new Properties();
+			for (Mod m : MODS) {
+				if (m instanceof CfgMod || m instanceof ClickGuiMod) continue;
+				pr.setProperty(m.name + ".key", String.valueOf(m.key));
+				pr.setProperty(m.name + ".enabled", String.valueOf(m.enabled));
+				for (Setting s : m.settings) {
+					pr.setProperty(m.name + "." + s.name, s.get());
+				}
+			}
+			try (OutputStream o = Files.newOutputStream(f)) {
+				pr.store(o, "KediClient cfg");
+			}
+		} catch (Exception ignored) {
+		}
+	}
+
+	static boolean loadFrom(Path f, Minecraft mc) {
+		try {
+			if (!Files.exists(f)) return false;
+			Properties pr = new Properties();
+			try (InputStream in = Files.newInputStream(f)) {
+				pr.load(in);
+			}
+			for (Mod m : MODS) {
+				if (m instanceof CfgMod || m instanceof ClickGuiMod) continue;
+				try {
+					String k = pr.getProperty(m.name + ".key");
+					if (k != null) m.key = Integer.parseInt(k.trim());
+				} catch (Exception ignored) {
+				}
+				for (Setting s : m.settings) {
+					String v = pr.getProperty(m.name + "." + s.name);
+					if (v != null) s.set(v);
+				}
+				String en = pr.getProperty(m.name + ".enabled");
+				if (en != null) {
+					boolean want = Boolean.parseBoolean(en.trim());
+					if (want != m.enabled) {
+						m.enabled = want;
+						if (want) m.onEnable(mc);
+						else m.onDisable(mc);
+					}
+				}
+			}
+			return true;
+		} catch (Exception ex) {
+			return false;
+		}
+	}
+
+				static void saveConfig() {
 		try {
 			Properties pr = new Properties();
 			for (Mod m : MODS) {
@@ -918,7 +981,7 @@ public class ExampleModClient implements ClientModInitializer {
 		renderEsp(g, mc, me, pt, sw, sh);
 		if (hud == null || !hud.enabled) return;
 
-							if (hud.watermark.value) {
+		if (hud.watermark.value) {
 			String t = "KediClient";
 			String info = " | " + mc.getUser().getName();
 			int w = mc.font.width(t + info) + 8;
@@ -1075,7 +1138,7 @@ public class ExampleModClient implements ClientModInitializer {
 	static abstract class Setting {
 		final String name;
 
-		Setting(String name) {
+				Setting(String name) {
 			this.name = name;
 		}
 
@@ -1171,7 +1234,7 @@ public class ExampleModClient implements ClientModInitializer {
 		int key;
 		final List<Setting> settings = new ArrayList<>();
 
-				   		Mod(String name, String category, int key) {
+		Mod(String name, String category, int key) {
 			this.name = name;
 			this.category = category;
 			this.key = key;
@@ -1259,8 +1322,12 @@ public class ExampleModClient implements ClientModInitializer {
 		BoolSetting critWait = bool("Kritik bekle", false);
 		BoolSetting hurtWait = bool("Hurt bekle", false);
 		BoolSetting showTarget = bool("Hedef kutusu", true);
+		BoolSetting lockTarget = bool("Hedef kilidi", false);
+		BoolSetting pauseUse = bool("Yerken durdur", true);
+		BoolSetting weaponOnly = bool("Sadece silahla", false);
 		long lastAtk = 0;
 		int switchIdx = 0;
+		LivingEntity locked = null;
 
 		Aura() {
 			super("Aura", "Combat", GLFW.GLFW_KEY_K);
@@ -1275,6 +1342,7 @@ public class ExampleModClient implements ClientModInitializer {
 		void onTick(Minecraft mc, LocalPlayer p) {
 			auraTarget = null;
 			if (mc.screen != null || !p.isAlive()) return;
+			if (pauseUse.value && p.isUsingItem()) return;
 
 			List<Cand> cands = new ArrayList<>();
 			List<LivingEntity> list = mc.level.getEntitiesOfClass(
@@ -1314,6 +1382,15 @@ public class ExampleModClient implements ClientModInitializer {
 			if (attackMode.is("Degistir") && cands.size() > 1) {
 				primary = cands.get(switchIdx % cands.size()).e;
 			}
+			if (lockTarget.value && locked != null) {
+				for (Cand c : cands) {
+					if (c.e == locked) {
+						primary = c.e;
+						break;
+					}
+				}
+			}
+			locked = primary;
 			auraTarget = primary;
 
 			float[] rot = rotationTo(p, aimAt(primary, aimPoint.index, predict.value));
@@ -1334,7 +1411,7 @@ public class ExampleModClient implements ClientModInitializer {
 			}
 			if (toHit.isEmpty()) return;
 
-			long now = System.currentTimeMillis();
+					long now = System.currentTimeMillis();
 			boolean ready;
 			if (waitCd.value) {
 				ready = p.getAttackStrengthScale(0.5f) >= 1.0f;
@@ -1347,6 +1424,7 @@ public class ExampleModClient implements ClientModInitializer {
 			if (hurtWait.value && primary.hurtTime > 0 && !attackMode.is("Coklu")) return;
 
 			if (autoSword.value) equipBestSword(p);
+			if (weaponOnly.value && !isWeapon(p.getMainHandItem())) return;
 			if (criticals != null && criticals.enabled) {
 				criticals.doCrit(p);
 			}
@@ -1407,7 +1485,7 @@ public class ExampleModClient implements ClientModInitializer {
 		double lastHz = 0;
 		double lastY = 0;
 
-					Velocity() {
+		Velocity() {
 			super("Velocity", "Combat", -1);
 		}
 
@@ -1599,7 +1677,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class ElytraHelper extends Mod {
+				static class ElytraHelper extends Mod {
 		BoolSetting autoSwap = bool("Oto takas", true);
 		ModeSetting swapMode = mode("Takas modu", 0, "Envanter", "Hotbar (tek tik)");
 		BoolSetting swapBack = bool("Inince geri tak", true);
@@ -1654,7 +1732,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-			static class ElytraFirework extends Mod {
+	static class ElytraFirework extends Mod {
 		BoolSetting silent = bool("Silent", true);
 
 		ElytraFirework() {
@@ -1847,7 +1925,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class Flight extends Mod {
+				static class Flight extends Mod {
 		FloatSetting speed = num("Hiz", 0.1f, 0.05f, 0.5f);
 
 		Flight() {
@@ -1925,7 +2003,7 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting range = num("Menzil", 120f, 20f, 300f);
 		FloatSetting fovMul = num("FOV ayari", 1.0f, 0.7f, 1.3f);
 
-					Esp() {
+		Esp() {
 			super("ESP", "Render", -1);
 		}
 	}
@@ -2138,7 +2216,7 @@ public class ExampleModClient implements ClientModInitializer {
 		BoolSetting swing = bool("El salla", true);
 		int cd = 0;
 
-		Scaffold() {
+							 		Scaffold() {
 			super("Scaffold", "Bedwars", -1);
 		}
 
@@ -2194,7 +2272,7 @@ public class ExampleModClient implements ClientModInitializer {
 				ItemEntity.class, p.getBoundingBox().inflate(range.value), x -> true);
 		}
 
-							@Override
+		@Override
 		void onDisable(Minecraft mc) {
 			resItems = new ArrayList<>();
 		}
@@ -2266,6 +2344,62 @@ public class ExampleModClient implements ClientModInitializer {
 			bedPos = null;
 			bedDist = -1;
 			sliceX = Integer.MIN_VALUE;
+		}
+	}
+
+	static class Nuker extends Mod {
+		FloatSetting range = num("Menzil", 4.5f, 2f, 6f);
+		BoolSetting onlyBeds = bool("Sadece yatak", true);
+		BoolSetting swing = bool("El salla", true);
+
+		Nuker() {
+			super("Nuker", "Bedwars", -1);
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			if (mc.screen != null || mc.gameMode == null) return;
+			int r = (int) Math.ceil(range.value);
+			BlockPos c = p.blockPosition();
+			Vec3 eye = p.getEyePosition();
+			double maxSq = range.value * range.value;
+			double best = Double.MAX_VALUE;
+			BlockPos found = null;
+			for (int x = -r; x <= r; x++) {
+				for (int y = -r; y <= r; y++) {
+					for (int z = -r; z <= r; z++) {
+						BlockPos pos = c.offset(x, y, z);
+						BlockState st = mc.level.getBlockState(pos);
+						if (st.isAir()) continue;
+						if (onlyBeds.value) {
+							if (!st.is(BlockTags.BEDS)) continue;
+						} else if (st.getDestroySpeed(mc.level, pos) < 0f) {
+							continue;
+						}
+						double d = eye.distanceToSqr(Vec3.atCenterOf(pos));
+						if (d > maxSq) continue;
+						if (d < best) {
+							best = d;
+							found = pos;
+						}
+					}
+				}
+			}
+			if (found == null) return;
+			Vec3 diff = eye.subtract(Vec3.atCenterOf(found));
+			double ax = Math.abs(diff.x);
+			double ay = Math.abs(diff.y);
+			double az = Math.abs(diff.z);
+			Direction face;
+			if (ay >= ax && ay >= az) {
+				face = diff.y > 0 ? Direction.UP : Direction.DOWN;
+			} else if (ax >= az) {
+				face = diff.x > 0 ? Direction.EAST : Direction.WEST;
+			} else {
+				face = diff.z > 0 ? Direction.SOUTH : Direction.NORTH;
+			}
+			mc.gameMode.continueDestroyBlock(found, face);
+			if (swing.value) p.swing(InteractionHand.MAIN_HAND);
 		}
 	}
 
@@ -2363,7 +2497,7 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting snapAngle = num("Donus siniri", 70f, 30f, 150f);
 		int lastMeHurt = 0;
 
-		AntiCheat() {
+												 		AntiCheat() {
 			super("AntiCheat", "Client", -1);
 		}
 
@@ -2463,7 +2597,7 @@ public class ExampleModClient implements ClientModInitializer {
 					}
 				}
 
-									if (reachChk.value && meHurtNow && o.swinging) {
+				if (reachChk.value && meHurtNow && o.swinging) {
 					AABB box = p.getBoundingBox();
 					Vec3 eye = o.getEyePosition();
 					double cx = Mth.clamp(eye.x, box.minX, box.maxX);
@@ -2586,7 +2720,47 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-	static class HudMod extends Mod {
+	static class CfgMod extends Mod {
+		ModeSetting slot = mode("Slot", 0, "Config 1", "Config 2", "Config 3", "Config 4", "Config 5");
+		BoolSetting save = bool("Kaydet (dokun)", false);
+		BoolSetting load = bool("Yukle (dokun)", false);
+		BoolSetting del = bool("Sil (dokun)", false);
+
+		CfgMod() {
+			super("Config", "Client", -1);
+			enabled = true;
+		}
+
+		@Override
+		void toggle(Minecraft mc) {
+		}
+
+		@Override
+		void onTick(Minecraft mc, LocalPlayer p) {
+			int i = slot.index;
+			if (save.value) {
+				save.value = false;
+				saveTo(slotPath(i));
+				p.displayClientMessage(Component.literal("Config " + (i + 1) + " kaydedildi"), true);
+			}
+			if (load.value) {
+				load.value = false;
+				boolean ok = loadFrom(slotPath(i), mc);
+				p.displayClientMessage(Component.literal(
+					ok ? "Config " + (i + 1) + " yuklendi" : "Config " + (i + 1) + " bos (kayit yok)"), true);
+			}
+			if (del.value) {
+				del.value = false;
+				try {
+					Files.deleteIfExists(slotPath(i));
+				} catch (Exception ignored) {
+				}
+				p.displayClientMessage(Component.literal("Config " + (i + 1) + " silindi"), true);
+			}
+		}
+	}
+
+							static class HudMod extends Mod {
 		BoolSetting watermark = bool("Isim yazisi", true);
 		BoolSetting arrayList = bool("Modul listesi", true);
 		BoolSetting splash = bool("Acilis yazisi", true);
@@ -2714,7 +2888,7 @@ public class ExampleModClient implements ClientModInitializer {
 					sel ? 0xFFFFFFFF : 0xFFAAAAAA);
 			}
 
-							// icerik
+			// icerik
 			g.fill(px, top, px + pw, bottom, 0xD00C0816);
 			List<Row> rows = buildRows();
 			clampScroll();
@@ -2819,7 +2993,7 @@ public class ExampleModClient implements ClientModInitializer {
 			return true;
 		}
 
-		@Override
+						@Override
 		public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
 			if (dragSetting != null) {
 				setSlider(dragSetting, mx);
@@ -2899,85 +3073,4 @@ public class ExampleModClient implements ClientModInitializer {
 			super.onClose();
 		}
 	}
-					}
-		@Override
-		public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
-			if (dragSetting != null) {
-				setSlider(dragSetting, mx);
-				return true;
-			}
-			if (Math.abs(mx - downX) > 3 || Math.abs(my - downY) > 3) moved = true;
-			if (moved) {
-				scroll -= dy;
-				clampScroll();
-			}
-			return true;
-		}
-
-		@Override
-		public boolean mouseReleased(double mx, double my, int button) {
-			if (dragSetting != null) {
-				dragSetting = null;
-				saveConfig();
-				return true;
-			}
-			if (ignoreRelease || moved) {
-				ignoreRelease = false;
-				return true;
-			}
-			if (my >= top && my < bottom && mx >= px && mx < px + pw) {
-				for (Row r : buildRows()) {
-					int ry = top + r.y - (int) scroll;
-					if (my >= ry && my < ry + r.h) {
-						if (r.type == 0) {
-							if (button == 1 || mx >= px + pw - 24) {
-								r.m.expanded = !r.m.expanded;
-							} else {
-								r.m.toggle(this.minecraft);
-							}
-						} else if (r.type == 1) {
-							BoolSetting b = (BoolSetting) r.s;
-							b.value = !b.value;
-						} else if (r.type == 4) {
-							ModeSetting ms = (ModeSetting) r.s;
-							ms.index = (ms.index + 1) % ms.options.length;
-						} else if (r.type == 3) {
-							listening = r.m;
-						}
-						break;
-					}
-				}
-			}
-			return true;
-		}
-
-		public boolean mouseScrolled(double mx, double my, double sx, double sy) {
-			scroll -= sy * 14;
-			clampScroll();
-			return true;
-		}
-
-		@Override
-		public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-			if (listening != null) {
-				if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-					listening = null;
-				} else if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
-					listening.key = -1;
-					listening = null;
-				} else {
-					listening.key = keyCode;
-					listening = null;
-				}
-				return true;
-			}
-			return super.keyPressed(keyCode, scanCode, modifiers);
-		}
-
-		@Override
-		public void onClose() {
-			saveConfig();
-			super.onClose();
-		}
-	}
-				}
+}
