@@ -2900,3 +2900,84 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 					}
+		@Override
+		public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+			if (dragSetting != null) {
+				setSlider(dragSetting, mx);
+				return true;
+			}
+			if (Math.abs(mx - downX) > 3 || Math.abs(my - downY) > 3) moved = true;
+			if (moved) {
+				scroll -= dy;
+				clampScroll();
+			}
+			return true;
+		}
+
+		@Override
+		public boolean mouseReleased(double mx, double my, int button) {
+			if (dragSetting != null) {
+				dragSetting = null;
+				saveConfig();
+				return true;
+			}
+			if (ignoreRelease || moved) {
+				ignoreRelease = false;
+				return true;
+			}
+			if (my >= top && my < bottom && mx >= px && mx < px + pw) {
+				for (Row r : buildRows()) {
+					int ry = top + r.y - (int) scroll;
+					if (my >= ry && my < ry + r.h) {
+						if (r.type == 0) {
+							if (button == 1 || mx >= px + pw - 24) {
+								r.m.expanded = !r.m.expanded;
+							} else {
+								r.m.toggle(this.minecraft);
+							}
+						} else if (r.type == 1) {
+							BoolSetting b = (BoolSetting) r.s;
+							b.value = !b.value;
+						} else if (r.type == 4) {
+							ModeSetting ms = (ModeSetting) r.s;
+							ms.index = (ms.index + 1) % ms.options.length;
+						} else if (r.type == 3) {
+							listening = r.m;
+						}
+						break;
+					}
+				}
+			}
+			return true;
+		}
+
+		public boolean mouseScrolled(double mx, double my, double sx, double sy) {
+			scroll -= sy * 14;
+			clampScroll();
+			return true;
+		}
+
+		@Override
+		public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+			if (listening != null) {
+				if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+					listening = null;
+				} else if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+					listening.key = -1;
+					listening = null;
+				} else {
+					listening.key = keyCode;
+					listening = null;
+				}
+				return true;
+			}
+			return super.keyPressed(keyCode, scanCode, modifiers);
+		}
+
+		@Override
+		public void onClose() {
+			saveConfig();
+			super.onClose();
+		}
+	}
+				}
