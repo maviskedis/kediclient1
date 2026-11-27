@@ -214,7 +214,7 @@ public class ExampleModClient implements ClientModInitializer {
 				m.keyDown = down;
 			}
 
-						macroTick(client, p);
+				 			macroTick(client, p);
 
 			for (Mod m : MODS) {
 				if (!m.enabled) continue;
@@ -476,7 +476,7 @@ public class ExampleModClient implements ClientModInitializer {
 		}
 	}
 
-						static boolean isValuable(ItemStack st) {
+		static boolean isValuable(ItemStack st) {
 		return st.is(Items.DIAMOND) || st.is(Items.EMERALD) || st.is(Items.GOLD_INGOT)
 			|| st.is(Items.NETHERITE_INGOT) || st.is(Items.TOTEM_OF_UNDYING)
 			|| st.is(Items.GOLDEN_APPLE) || st.is(Items.ENCHANTED_GOLDEN_APPLE)
@@ -659,7 +659,7 @@ public class ExampleModClient implements ClientModInitializer {
 		"Kritik", "Kalp", "Alev", "Yildiz", "Buyu", "Yesil", "Havai fisek", "Vurus"
 	};
 
-																			   	static ParticleOptions particleFor(int i) {
+					static ParticleOptions particleFor(int i) {
 		switch (i) {
 			case 1:
 				return ParticleTypes.HEART;
@@ -918,7 +918,7 @@ public class ExampleModClient implements ClientModInitializer {
 		renderEsp(g, mc, me, pt, sw, sh);
 		if (hud == null || !hud.enabled) return;
 
-					if (hud.watermark.value) {
+							if (hud.watermark.value) {
 			String t = "KediClient";
 			String info = " | " + mc.getUser().getName();
 			int w = mc.font.width(t + info) + 8;
@@ -1171,7 +1171,7 @@ public class ExampleModClient implements ClientModInitializer {
 		int key;
 		final List<Setting> settings = new ArrayList<>();
 
-						 		Mod(String name, String category, int key) {
+				   		Mod(String name, String category, int key) {
 			this.name = name;
 			this.category = category;
 			this.key = key;
@@ -1407,7 +1407,7 @@ public class ExampleModClient implements ClientModInitializer {
 		double lastHz = 0;
 		double lastY = 0;
 
-						Velocity() {
+					Velocity() {
 			super("Velocity", "Combat", -1);
 		}
 
@@ -1838,15 +1838,12 @@ public class ExampleModClient implements ClientModInitializer {
 		void onTick(Minecraft mc, LocalPlayer p) {
 			if (!(mc.screen instanceof AbstractContainerScreen)) return;
 			long win = mc.getWindow().getWindow();
-			net.minecraft.client.KeyMapping[] ks = {
-				mc.options.keyUp, mc.options.keyDown, mc.options.keyLeft,
-				mc.options.keyRight, mc.options.keyJump, mc.options.keySprint
-			};
-			for (net.minecraft.client.KeyMapping km : ks) {
-				if (km.getKey().getType() == InputConstants.Type.KEYSYM) {
-					km.setDown(isDown(win, km.getKey().getValue()));
-				}
-			}
+			mc.options.keyUp.setDown(isDown(win, GLFW.GLFW_KEY_W));
+			mc.options.keyDown.setDown(isDown(win, GLFW.GLFW_KEY_S));
+			mc.options.keyLeft.setDown(isDown(win, GLFW.GLFW_KEY_A));
+			mc.options.keyRight.setDown(isDown(win, GLFW.GLFW_KEY_D));
+			mc.options.keyJump.setDown(isDown(win, GLFW.GLFW_KEY_SPACE));
+			mc.options.keySprint.setDown(isDown(win, GLFW.GLFW_KEY_LEFT_CONTROL));
 		}
 	}
 
@@ -1928,7 +1925,7 @@ public class ExampleModClient implements ClientModInitializer {
 		FloatSetting range = num("Menzil", 120f, 20f, 300f);
 		FloatSetting fovMul = num("FOV ayari", 1.0f, 0.7f, 1.3f);
 
-						Esp() {
+					Esp() {
 			super("ESP", "Render", -1);
 		}
 	}
@@ -2197,7 +2194,7 @@ public class ExampleModClient implements ClientModInitializer {
 				ItemEntity.class, p.getBoundingBox().inflate(range.value), x -> true);
 		}
 
-						@Override
+							@Override
 		void onDisable(Minecraft mc) {
 			resItems = new ArrayList<>();
 		}
@@ -2466,7 +2463,7 @@ public class ExampleModClient implements ClientModInitializer {
 					}
 				}
 
-						if (reachChk.value && meHurtNow && o.swinging) {
+									if (reachChk.value && meHurtNow && o.swinging) {
 					AABB box = p.getBoundingBox();
 					Vec3 eye = o.getEyePosition();
 					double cx = Mth.clamp(eye.x, box.minX, box.maxX);
