@@ -36,6 +36,7 @@ import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.phys.EntityHitResult;
 import org.lwjgl.glfw.GLFW;
@@ -64,6 +65,8 @@ public class KediClient implements ClientModInitializer {
 	static boolean lastRight = false;
 	static boolean zooming = false;
 	static int normalFov = -1;
+	static long hitFlashUntil = 0;
+	static double savedBlur = -1;
 
 	@Override
 	public void onInitializeClient() {
@@ -116,6 +119,14 @@ public class KediClient implements ClientModInitializer {
 				zooming = false;
 			}
 
+			if (misc.autoRefill.value) autoRefill(p);
+			if (misc.noMenuBlur.value) {
+				if (savedBlur < 0) savedBlur = client.options.menuBackgroundBlurriness().get();
+				client.options.menuBackgroundBlurriness().set(0.0);
+			} else if (savedBlur >= 0) {
+				client.options.menuBackgroundBlurriness().set(savedBlur);
+				savedBlur = -1;
+			}
 			if (render.fullbright.value) {
 				p.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 1000, 0, false, false, false));
 			}
@@ -126,6 +137,7 @@ public class KediClient implements ClientModInitializer {
 		AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
 			if (world.isClientSide()) {
 				if (render.hitParticles.value) spawnHitParticles(entity);
+				if (render.hitFlash.value) hitFlashUntil = System.currentTimeMillis() + 150;
 				if (misc.clickSounds.value) playClick(true);
 			}
 			return InteractionResult.PASS;
@@ -171,7 +183,6 @@ public class KediClient implements ClientModInitializer {
 			mc.level.addParticle(opt, e.getX() + rx, e.getY() + ry, e.getZ() + rz, 0, 0.1, 0);
 		}
 	}
-
 	static final String[] PARTICLE_NAMES = { "Kritik", "Kalp", "Yildiz", "Buyu", "Yesil", "Alev" };
 
 	static ParticleOptions particleFor(int i) {
@@ -191,7 +202,27 @@ public class KediClient implements ClientModInitializer {
 		}
 	}
 
-				static void quickEquipWeapon(LocalPlayer p) {
+	static void autoRefill(LocalPlayer p) {
+		ItemStack cur = p.getMainHandItem();
+		if (cur.isEmpty() || !cur.isDamageableItem()) return;
+		if (cur.getMaxDamage() - cur.getDamageValue() > 1) return;
+		int selected = p.getInventory().selected;
+		for (int i = 9; i <= 44; i++) {
+			ItemStack st = p.inventoryMenu.getSlot(i).getItem();
+			if (st.is(cur.getItem()) && (st.getMaxDamage() - st.getDamageValue() > 1 || !st.isDamageableItem())) {
+				mc_swap(p, i, selected + 36 > 44 ? selected : selected + 36);
+				return;
+			}
+		}
+	}
+
+	static void mc_swap(LocalPlayer p, int from, int to) {
+		Minecraft mc = Minecraft.getInstance();
+		mc.gameMode.handleInventoryMouseClick(
+			p.inventoryMenu.containerId, from, to, ClickType.SWAP, p);
+	}
+
+	static void quickEquipWeapon(LocalPlayer p) {
 		Item[] order = {
 			Items.NETHERITE_SWORD, Items.DIAMOND_SWORD, Items.IRON_SWORD,
 			Items.STONE_SWORD, Items.GOLDEN_SWORD, Items.WOODEN_SWORD
@@ -351,6 +382,7 @@ public class KediClient implements ClientModInitializer {
 		ModeSetting particleType = new ModeSetting("Partikul turu", 0, PARTICLE_NAMES);
 		IntSetting particleAmount = f("Partikul miktari", 8f, 1f, 25f);
 		IntSetting zoomFov = f("Zoom FOV", 25f, 5f, 70f);
+		BoolSetting hitFlash = b("Vurus parlamasi", true);
 
 		RenderCat() {
 			super("Render");
@@ -360,6 +392,10 @@ public class KediClient implements ClientModInitializer {
 
 	static class MiscCat extends Cat {
 		BoolSetting clickSounds = b("Tiklama sesi", false);
+		BoolSetting autoRefill = b("Oto yenileme (alet)", true);
+		BoolSetting noMenuBlur = b("Menu bulanikligi kapat", true);
+		BoolSetting cooldownDisplay = b("Inci sogumasi", true);
+		BoolSetting hideChat = b("Sohbeti gizle", false);
 
 		MiscCat() {
 			super("Diger");
@@ -383,7 +419,7 @@ public class KediClient implements ClientModInitializer {
 		int sw = mc.getWindow().getGuiScaledWidth();
 		int sh = mc.getWindow().getGuiScaledHeight();
 
-		if (hud.watermark.value) {
+			if (hud.watermark.value) {
 			String t = "KediClient";
 			g.fill(3, 3, 3 + mc.font.width(t) + 8, 15, 0xA0101828);
 			g.fill(3, 3, 5, 15, ACCENT);
@@ -449,7 +485,7 @@ public class KediClient implements ClientModInitializer {
 			iy += 11;
 		}
 
-				if (hud.healthBar.value) {
+		if (hud.healthBar.value) {
 			int bw = 100;
 			int bx = sw / 2 - bw / 2;
 			int by = sh - 48;
@@ -478,6 +514,25 @@ public class KediClient implements ClientModInitializer {
 			g.fill(cx - 10, cy + 10, cx + 10, cy + 12, 0x60000000);
 			float scale = Math.min(1f, me.getAttackStrengthScale(0.5f));
 			g.fill(cx - 10, cy + 10, cx - 10 + (int) (20 * scale), cy + 12, col);
+		}
+
+		if (misc.cooldownDisplay.value && mc.getConnection() != null) {
+			float pct = me.getCooldowns().getCooldownPercent(Items.ENDER_PEARL, mc.getFrameTime());
+			if (pct > 0f) {
+				int bw = 60;
+				int bx = sw / 2 - bw / 2;
+				int by = sh / 2 + 28;
+				g.fill(bx, by, bx + bw, by + 4, 0x90000000);
+				g.fill(bx, by, bx + (int) (bw * (1f - pct)), by + 4, 0xFF66CCFF);
+			}
+		}
+
+		if (misc.hideChat.value) {
+			g.fill(2, sh - 180, 320, sh - 40, 0xE0000000);
+		}
+
+		if (render.hitFlash.value && System.currentTimeMillis() < hitFlashUntil) {
+			g.fill(0, 0, sw, sh, 0x22FF3333);
 		}
 
 		if (combat.reachInfo.value && mc.hitResult instanceof EntityHitResult eh) {
@@ -561,7 +616,7 @@ public class KediClient implements ClientModInitializer {
 			}).bounds(x, y, w, 20).build();
 		}
 
-		private static Component blabel(BoolSetting b) {
+					private static Component blabel(BoolSetting b) {
 			return Component.literal(b.name + ": " + (b.value ? "ACIK" : "KAPALI"));
 		}
 
@@ -589,4 +644,4 @@ public class KediClient implements ClientModInitializer {
 			s.value = (float) (s.min + this.value * (s.max - s.min));
 		}
 	}
-				  }
+}
